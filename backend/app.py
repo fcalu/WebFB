@@ -17,6 +17,7 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 # CONFIG
 # -------------------------------------------------------------------
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+SKIP_TRAIN_ON_STARTUP = os.getenv("SKIP_TRAIN_ON_STARTUP", "1") == "1"  # por defecto: no entrenar en Render
 
 # CSV según tus capturas (colócalos en backend/data/)
 LEAGUES_FILES: Dict[str, str] = {
@@ -318,7 +319,7 @@ frames: Dict[str, pd.DataFrame] = {}
 teams_cache: Dict[str, List[str]] = {}
 models: Dict[str, ModelPack] = {}
 
-def _load_all() -> None:
+def _load_all(build_models: bool = True) -> None:
     frames.clear(); teams_cache.clear(); models.clear()
     for pretty, fname in LEAGUES_FILES.items():
         path = os.path.join(DATA_DIR, fname)
@@ -331,11 +332,14 @@ def _load_all() -> None:
             df = _augment_df(raw)
             frames[pretty] = df
             teams_cache[pretty] = sorted(set(df["home_team_name"]).union(df["away_team_name"]))
-            try:
-                models[pretty] = _build_models(df)
-                print(f"[OK] {pretty}: {len(df)} filas, {len(teams_cache[pretty])} equipos")
-            except Exception as me:
-                print(f"[WARN] Modelo falló para {pretty}: {me}")
+            if build_models:
+                try:
+                    models[pretty] = _build_models(df)
+                    print(f"[OK] {pretty}: {len(df)} filas, {len(teams_cache[pretty])} equipos")
+                except Exception as me:
+                    print(f"[WARN] Modelo falló para {pretty}: {me}")
+            else:
+                print(f"[OK] {pretty}: {len(df)} filas, {len(teams_cache[pretty])} equipos (sin entrenar)")
         except Exception as e:
             print(f"[ERROR] Cargando {pretty}: {e}")
 
@@ -356,7 +360,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _startup():
-    _load_all()
+    _load_all(build_models=not SKIP_TRAIN_ON_STARTUP)
 
 @app.get("/health")
 def health():
@@ -401,6 +405,11 @@ def predict(payload: PredictPayload):
     total_corners_avg = float(hs0["home_team_corner_count_avg"] + as0["away_team_corner_count_avg"])
 
     if league in models:
+        try:
+            print(f"[INFO] Entrenando modelo bajo demanda para {league}...")
+            models[league] = _build_models(df)
+        except Exception as me:
+            print(f"[WARN] Entrenamiento on-demand falló: {me}")
         mp = models[league]
         X = np.array([[hλ, aλ, float(hs0["home_team_corner_count_avg"]), float(as0["away_team_corner_count_avg"])]], dtype=float)
         Xs = mp.scaler.transform(X)

@@ -61,7 +61,9 @@ type HistItem = {
 };
 
 //const API = (import.meta.env.VITE_API_BASE_URL as string) ?? "http://localhost:8000";
-const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
+//const API = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const API =
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 const HISTORY_KEY = "fm_history_v2";
 
