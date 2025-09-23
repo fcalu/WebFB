@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+.card { @apply rounded-2xl bg-surface/80 border border-line shadow-soft; }
+.btn-primary { @apply rounded-2xl px-4 py-2 bg-primary hover:opacity-90 transition font-semibold; }
+
+/* Enhanced visuals */
+* { scrollbar-width: thin; }
+
+/* Light theme overrides */
+.theme-light body, .theme-light .bg-bg { background-color: #f7f8fb !important; color: #0b1220 !important; }
+.theme-light .card { background-color: #ffffffcc !important; color: #0b1220 !important; border-color: #e5e7eb !important; }
+.theme-light .btn-primary { color: #ffffff !important; }
+.theme-light select, .theme-light input { background-color: #ffffff !important; color: #0b1220 !important; border-color: #e5e7eb !important; }
+.theme-light .text-dim { color: #4b5563 !important; }
+.theme-light .border-line { border-color: #e5e7eb !important; }
+.theme-light .bg-line { background-color: #e5e7eb !important; }
+.theme-light * { scrollbar-color: #cbd5e1 #f1f5f9; }
