@@ -1,15 +1,15 @@
 // src/App.tsx
 import { useEffect, useMemo, useState } from "react";
 
-/** ===================== Types ===================== **/
+/* ===================== Types ===================== */
 type ApiLeagues = { leagues: string[] };
 type ApiTeams = { teams: string[] };
 
 type BestPick = {
   market: string;
   selection: string;
-  prob_pct: number;
-  confidence: number;
+  prob_pct: number;      // 0-100
+  confidence: number;    // 0-100
   reasons: string[];
   summary: string;
 };
@@ -40,7 +40,7 @@ type PredictResponse = {
   summary: string;
 };
 
-/** ===================== Config ===================== **/
+/* ===================== Config ===================== */
 const API_BASE: string =
   (typeof import.meta !== "undefined" &&
     (import.meta as any).env?.VITE_API_BASE_URL?.replace(/\/$/, "")) ||
@@ -49,7 +49,9 @@ const API_BASE: string =
 const pct = (n?: number) =>
   n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`;
 
-/** ===================== Styles (inline) ===================== **/
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
+/* ===================== Styles ===================== */
 const page: React.CSSProperties = {
   minHeight: "100vh",
   background:
@@ -163,30 +165,209 @@ const statBox: React.CSSProperties = {
   color: "#c7cdd5",
 };
 
-/** ===================== App ===================== **/
-export default function App() {
-  const [dark, setDark] = useState(true);
+/* ===================== Header + Drawer ===================== */
+type View = "calc" | "parley2" | "parley3" | "parley4";
 
-  const [leagues, setLeagues] = useState<string[]>([]);
+function Header({
+  dark,
+  setDark,
+  onOpenMenu,
+}: {
+  dark: boolean;
+  setDark: (v: boolean) => void;
+  onOpenMenu: () => void;
+}) {
+  return (
+    <div style={headerRow}>
+      <div style={brandRow}>
+        {/* Hamburguesa */}
+        <button
+          onClick={onOpenMenu}
+          style={{
+            ...actionBtn(false),
+            width: 44,
+            height: 44,
+            justifyContent: "center",
+            padding: 0,
+            borderRadius: 12,
+          }}
+          title="Menú"
+        >
+          ☰
+        </button>
+
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 16,
+            display: "grid",
+            placeItems: "center",
+            background: "linear-gradient(135deg,#7c3aed,#5b21b6)",
+            boxShadow: "0 10px 22px rgba(124,58,237,.35)",
+            fontSize: 26,
+          }}
+        >
+          ⚡️
+        </div>
+        <div>
+          <div style={{ fontSize: 28, fontWeight: 900 }}>
+            FootyMines · IA Predictor
+          </div>
+          <div style={{ opacity: 0.8 }}>
+            Predicciones confiables para el usuario final
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button style={actionBtn(false)}>↻ Historial</button>
+        <button
+          style={actionBtn(false)}
+          onClick={() => setDark(!dark)}
+          title="Cambiar tema"
+        >
+          {dark ? "☀️ Claro" : "🌙 Oscuro"}
+        </button>
+        <button style={actionBtn(true)}>📈 Explorar</button>
+      </div>
+    </div>
+  );
+}
+
+function Drawer({
+  open,
+  onClose,
+  setView,
+  view,
+}: {
+  open: boolean;
+  onClose: () => void;
+  view: View;
+  setView: (v: View) => void;
+}) {
+  return (
+    <>
+      {/* overlay */}
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: open ? "rgba(0,0,0,.45)" : "transparent",
+          pointerEvents: open ? "auto" : "none",
+          transition: "background .25s",
+          zIndex: 40,
+        }}
+      />
+      {/* drawer */}
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          height: "100%",
+          width: 280,
+          background: "#0b1020",
+          borderRight: "1px solid rgba(255,255,255,.1)",
+          transform: open ? "translateX(0)" : "translateX(-110%)",
+          transition: "transform .25s",
+          zIndex: 50,
+          padding: 16,
+        }}
+      >
+        <div style={{ fontWeight: 900, marginBottom: 14, fontSize: 18 }}>
+          ☰ Menú
+        </div>
+        <MenuItem
+          active={view === "calc"}
+          label="Calculadora"
+          onClick={() => {
+            setView("calc");
+            onClose();
+          }}
+        />
+        <div style={{ opacity: 0.6, margin: "10px 0 6px", fontSize: 12 }}>
+          Parlays IA
+        </div>
+        <MenuItem
+          active={view === "parley2"}
+          label="Parley doble"
+          onClick={() => {
+            setView("parley2");
+            onClose();
+          }}
+        />
+        <MenuItem
+          active={view === "parley3"}
+          label="Parley triple"
+          onClick={() => {
+            setView("parley3");
+            onClose();
+          }}
+        />
+        <MenuItem
+          active={view === "parley4"}
+          label="Súper parley (4)"
+          onClick={() => {
+            setView("parley4");
+            onClose();
+          }}
+        />
+        <div style={{ marginTop: 18, fontSize: 12, opacity: 0.65 }}>
+          *La IA sugiere el pick más seguro por partido y calcula probabilidad
+          combinada. Uso informativo.
+        </div>
+      </div>
+    </>
+  );
+}
+
+function MenuItem({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        padding: "12px 12px",
+        borderRadius: 12,
+        border: "1px solid rgba(255,255,255,.12)",
+        background: active ? "rgba(124,58,237,.25)" : "rgba(255,255,255,.04)",
+        color: "#e5e7eb",
+        marginBottom: 10,
+        fontWeight: active ? 900 : 600,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+/* ===================== Calculadora (igual a tu diseño) ===================== */
+function Calculadora({
+  dark,
+  leagues,
+}: {
+  dark: boolean;
+  leagues: string[];
+}) {
   const [league, setLeague] = useState("");
-
   const [teams, setTeams] = useState<string[]>([]);
   const [home, setHome] = useState("");
   const [away, setAway] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [data, setData] = useState<PredictResponse | null>(null);
 
-  /** Load leagues */
-  useEffect(() => {
-    fetch(`${API_BASE}/leagues`)
-      .then((r) => r.json())
-      .then((d: ApiLeagues) => setLeagues(d.leagues ?? []))
-      .catch(() => setErr("No pude cargar ligas."));
-  }, []);
-
-  /** Load teams on league change */
   useEffect(() => {
     setHome("");
     setAway("");
@@ -234,261 +415,467 @@ export default function App() {
   }
 
   return (
-    <div style={{ ...page, backgroundColor: dark ? undefined : "#f6f7fb", color: dark ? "#e5e7eb" : "#0b1020" }}>
-      <div style={wrap}>
-        {/* ===================== Header ===================== */}
-        <div style={headerRow}>
-          <div style={brandRow}>
+    <>
+      {/* Badges */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 18 }}>
+        <div style={pill}>🛡️ Poisson</div>
+        <div style={pill}>🛡️ BTTS</div>
+        <div style={pill}>🛡️ MLP Corners</div>
+      </div>
+
+      {/* Search */}
+      <div style={{ ...panel, padding: 22, marginBottom: 18 }}>
+        <div style={grid3}>
+          <div>
+            <div style={label}>Liga</div>
+            <select
+              value={league}
+              onChange={(e) => setLeague(e.target.value)}
+              style={input}
+            >
+              <option value="">— Selecciona liga —</option>
+              {leagues.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div style={label}>Equipo local</div>
+            <input
+              placeholder="Escribe para buscar..."
+              value={home}
+              onChange={(e) => setHome(e.target.value)}
+              list="home_datalist"
+              style={input}
+            />
+            <datalist id="home_datalist">
+              {filteredHome.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+          </div>
+          <div>
+            <div style={label}>Equipo visitante</div>
+            <input
+              placeholder="Escribe para buscar..."
+              value={away}
+              onChange={(e) => setAway(e.target.value)}
+              list="away_datalist"
+              style={input}
+            />
+            <datalist id="away_datalist">
+              {filteredAway.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16 }}>
+          <button
+            style={{
+              ...primaryBtn,
+              opacity: !canPredict || loading ? 0.6 : 1,
+              cursor: !canPredict || loading ? "not-allowed" : "pointer",
+            }}
+            onClick={onPredict}
+            disabled={!canPredict || loading}
+          >
+            {loading ? "Calculando…" : "Predecir"}
+          </button>
+          {!canPredict && (
+            <div style={{ opacity: 0.75 }}>
+              Selecciona liga y ambos equipos (distintos).
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Error */}
+      {err && (
+        <div
+          style={{
+            background: "rgba(239,68,68,.12)",
+            border: "1px solid rgba(239,68,68,.3)",
+            color: dark ? "#fecaca" : "#7f1d1d",
+            padding: 12,
+            borderRadius: 12,
+            marginBottom: 14,
+          }}
+        >
+          {err}
+        </div>
+      )}
+
+      {/* Resultado */}
+      {data && (
+        <>
+          <div style={{ ...cardGradient, marginBottom: 18 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.85, marginBottom: 6 }}>
+              Mejor predicción
+            </div>
+            <div style={{ fontSize: 30, fontWeight: 900, lineHeight: 1.2, marginBottom: 6 }}>
+              {data.best_pick.market} — {data.best_pick.selection}
+            </div>
+            <div style={{ fontSize: 16, marginBottom: 12 }}>
+              Prob: <b>{pct(data.best_pick.prob_pct)}</b> · Confianza:{" "}
+              <b>{pct(data.best_pick.confidence)}</b>
+            </div>
+
+            <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+              {data.best_pick.reasons.map((r, i) => (
+                <li key={i} style={{ color: "#d1d5db" }}>
+                  {r}
+                </li>
+              ))}
+            </ul>
+
+            <div style={{ marginTop: 10, opacity: 0.9 }}>{data.summary}</div>
+          </div>
+
+          <div style={{ ...panel, marginBottom: 18 }}>
+            <div style={{ fontWeight: 900, marginBottom: 10 }}>MERCADOS</div>
             <div
               style={{
-                width: 56,
-                height: 56,
-                borderRadius: 16,
                 display: "grid",
-                placeItems: "center",
-                background: "linear-gradient(135deg,#7c3aed,#5b21b6)",
-                boxShadow: "0 10px 22px rgba(124,58,237,.35)",
-                fontSize: 26,
+                gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
+                gap: 12,
               }}
             >
-              ⚡️
-            </div>
-            <div>
-              <div style={{ fontSize: 28, fontWeight: 900 }}>
-                FootyMines · IA Predictor
+              <div style={statBox}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>1X2</div>
+                <div>1: {pct(data.probs.home_win_pct)}</div>
+                <div>X: {pct(data.probs.draw_pct)}</div>
+                <div>2: {pct(data.probs.away_win_pct)}</div>
               </div>
-              <div style={{ opacity: 0.8 }}>Predicciones confiables para el usuario final</div>
+
+              <div style={statBox}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>Goles</div>
+                <div>Over 2.5: {pct(data.probs.over_2_5_pct)}</div>
+                <div>BTTS Sí: {pct(data.probs.btts_pct)}</div>
+                <div>Over 2.5 (MLP): {pct(data.probs.o25_mlp_pct)}</div>
+              </div>
+
+              <div style={statBox}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  Marcadores más probables
+                </div>
+                {(data.poisson?.top_scorelines ?? []).slice(0, 3).map((t) => (
+                  <div key={t.score}>
+                    {t.score} · {t.pct}%
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button style={actionBtn(false)}>↻ Historial</button>
-            <button
-              style={actionBtn(false)}
-              onClick={() => setDark((d) => !d)}
-              title="Cambiar tema"
-            >
-              {dark ? "☀️ Claro" : "🌙 Oscuro"}
-            </button>
-            <button style={actionBtn(true)}>📈 Explorar</button>
-          </div>
-        </div>
-
-        {/* Badges */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 18 }}>
-          <div style={pill}>🛡️ Poisson</div>
-          <div style={pill}>🛡️ BTTS</div>
-          <div style={pill}>🛡️ MLP Corners</div>
-        </div>
-
-        {/* ===================== Search Card ===================== */}
-        <div style={{ ...panel, padding: 22, marginBottom: 18 }}>
-          <div style={grid3}>
-            {/* Liga */}
-            <div>
-              <div style={label}>Liga</div>
-              <select
-                value={league}
-                onChange={(e) => setLeague(e.target.value)}
-                style={input}
-              >
-                <option value="">— Selecciona liga —</option>
-                {leagues.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Local */}
-            <div>
-              <div style={label}>Equipo local</div>
-              <input
-                placeholder="Escribe para buscar..."
-                value={home}
-                onChange={(e) => setHome(e.target.value)}
-                list="home_datalist"
-                style={input}
-              />
-              <datalist id="home_datalist">
-                {filteredHome.map((t) => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
-            </div>
-
-            {/* Visitante */}
-            <div>
-              <div style={label}>Equipo visitante</div>
-              <input
-                placeholder="Escribe para buscar..."
-                value={away}
-                onChange={(e) => setAway(e.target.value)}
-                list="away_datalist"
-                style={input}
-              />
-              <datalist id="away_datalist">
-                {filteredAway.map((t) => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16 }}>
-            <button
+          <div style={panel}>
+            <div style={{ fontWeight: 900, marginBottom: 10 }}>GOLES Y CORNERS</div>
+            <div
               style={{
-                ...primaryBtn,
-                opacity: !canPredict || loading ? 0.6 : 1,
-                cursor: !canPredict || loading ? "not-allowed" : "pointer",
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
+                gap: 12,
               }}
-              onClick={onPredict}
-              disabled={!canPredict || loading}
             >
-              {loading ? "Calculando…" : "Predecir"}
-            </button>
-            {!canPredict && (
-              <div style={{ opacity: 0.75 }}>
-                Selecciona liga y ambos equipos (distintos).
+              <div style={statBox}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>Lambdas (λ)</div>
+                <div>λ Local: {data.poisson?.home_lambda ?? "—"}</div>
+                <div>λ Visitante: {data.poisson?.away_lambda ?? "—"}</div>
               </div>
-            )}
+              <div style={statBox}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>Corners</div>
+                <div>Promedio total: {data.averages.total_corners_avg.toFixed(2)}</div>
+                <div>Predicción MLP: {data.averages.corners_mlp_pred.toFixed(2)}</div>
+              </div>
+              <div style={statBox}>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>Tarjetas</div>
+                <div>
+                  Promedio total amarillas:{" "}
+                  {data.averages.total_yellow_cards_avg.toFixed(2)}
+                </div>
+              </div>
+            </div>
           </div>
+        </>
+      )}
+
+      <div style={{ marginTop: 28, opacity: 0.6, fontSize: 12 }}>
+        *Modelo: Poisson + BTTS + MLP (corners y O2.5). Uso informativo; no constituye
+        asesoría financiera.
+      </div>
+    </>
+  );
+}
+
+/* ===================== Parlay Builder ===================== */
+type LegState = {
+  league: string;
+  teams: string[];
+  home: string;
+  away: string;
+  loading: boolean;
+  error: string;
+  result?: PredictResponse;
+};
+
+function ParlayBuilder({
+  leagues,
+  legsRequired,
+}: {
+  leagues: string[];
+  legsRequired: 2 | 3 | 4;
+}) {
+  const [legs, setLegs] = useState<LegState[]>(
+    Array.from({ length: legsRequired }, () => ({
+      league: "",
+      teams: [],
+      home: "",
+      away: "",
+      loading: false,
+      error: "",
+    }))
+  );
+
+  function setLeg(idx: number, patch: Partial<LegState>) {
+    setLegs((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...patch };
+      return next;
+    });
+  }
+
+  async function onLeagueChange(idx: number, league: string) {
+    setLeg(idx, { league, home: "", away: "", result: undefined, error: "" });
+    if (!league) {
+      setLeg(idx, { teams: [] });
+      return;
+    }
+    try {
+      const r = await fetch(`${API_BASE}/teams?league=${encodeURIComponent(league)}`);
+      const d: ApiTeams = await r.json();
+      setLeg(idx, { teams: d.teams ?? [] });
+    } catch {
+      setLeg(idx, { error: "No pude cargar equipos." });
+    }
+  }
+
+  async function predictLeg(idx: number) {
+    const L = legs[idx];
+    if (!(L.league && L.home && L.away && L.home !== L.away)) {
+      setLeg(idx, { error: "Completa liga y equipos distintos." });
+      return;
+    }
+    setLeg(idx, { loading: true, error: "", result: undefined });
+    try {
+      const res = await fetch(`${API_BASE}/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          league: L.league,
+          home_team: L.home,
+          away_team: L.away,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json: PredictResponse = await res.json();
+      setLeg(idx, { result: json });
+    } catch (e: any) {
+      setLeg(idx, { error: e?.message || "Error en predicción" });
+    } finally {
+      setLeg(idx, { loading: false });
+    }
+  }
+
+  // Probabilidad combinada (producto de las mejores jugadas)
+  const combinedProb01 = useMemo(() => {
+    const probs = legs
+      .map((l) => l.result?.best_pick?.prob_pct)
+      .filter((p): p is number => typeof p === "number")
+      .map((p) => clamp01(p / 100));
+    if (probs.length < legsRequired) return 0;
+    return probs.reduce((a, b) => a * b, 1);
+  }, [legs, legsRequired]);
+
+  const allReady = legs.every(
+    (l) => l.result && !l.loading && !l.error && l.home && l.away
+  );
+
+  return (
+    <div>
+      <div style={{ ...panel, padding: 22, marginBottom: 18 }}>
+        <div style={{ fontWeight: 900, marginBottom: 10 }}>
+          Construye tu parley — {legsRequired} selecciones
         </div>
 
-        {/* Error */}
-        {err && (
-          <div
-            style={{
-              background: "rgba(239,68,68,.12)",
-              border: "1px solid rgba(239,68,68,.3)",
-              color: dark ? "#fecaca" : "#7f1d1d",
-              padding: 12,
-              borderRadius: 12,
-              marginBottom: 14,
-            }}
-          >
-            {err}
-          </div>
-        )}
+        <div style={{ display: "grid", gap: 16 }}>
+          {legs.map((L, idx) => {
+            const filteredHome = L.teams.filter((t) =>
+              t.toLowerCase().includes(L.home.toLowerCase())
+            );
+            const filteredAway = L.teams.filter((t) =>
+              t.toLowerCase().includes(L.away.toLowerCase())
+            );
 
-        {/* ===================== Results ===================== */}
-        {data && (
-          <>
-            {/* Mejor predicción */}
-            <div style={{ ...cardGradient, marginBottom: 18 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.85, marginBottom: 6 }}>
-                Mejor predicción
-              </div>
-              <div style={{ fontSize: 30, fontWeight: 900, lineHeight: 1.2, marginBottom: 6 }}>
-                {data.best_pick.market} — {data.best_pick.selection}
-              </div>
-              <div style={{ fontSize: 16, marginBottom: 12 }}>
-                Prob: <b>{pct(data.best_pick.prob_pct)}</b> · Confianza:{" "}
-                <b>{pct(data.best_pick.confidence)}</b>
-              </div>
-
-              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
-                {data.best_pick.reasons.map((r, i) => (
-                  <li key={i} style={{ color: "#d1d5db" }}>
-                    {r}
-                  </li>
-                ))}
-              </ul>
-
-              <div style={{ marginTop: 10, opacity: 0.9 }}>{data.summary}</div>
-            </div>
-
-            {/* Mercados */}
-            <div style={{ ...panel, marginBottom: 18 }}>
-              <div
-                style={{
-                  fontWeight: 900,
-                  color: dark ? "#e5e7eb" : "#111827",
-                  marginBottom: 10,
-                }}
-              >
-                MERCADOS
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
-                  gap: 12,
-                }}
-              >
-                <div style={statBox}>
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>1X2</div>
-                  <div>1: {pct(data.probs.home_win_pct)}</div>
-                  <div>X: {pct(data.probs.draw_pct)}</div>
-                  <div>2: {pct(data.probs.away_win_pct)}</div>
+            return (
+              <div key={idx} style={{ ...panel }}>
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                  Leg #{idx + 1}
                 </div>
-
-                <div style={statBox}>
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Goles</div>
-                  <div>Over 2.5: {pct(data.probs.over_2_5_pct)}</div>
-                  <div>BTTS Sí: {pct(data.probs.btts_pct)}</div>
-                  <div>Over 2.5 (MLP): {pct(data.probs.o25_mlp_pct)}</div>
-                </div>
-
-                <div style={statBox}>
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>
-                    Marcadores más probables
-                  </div>
-                  {(data.poisson?.top_scorelines ?? []).slice(0, 3).map((t) => (
-                    <div key={t.score}>
-                      {t.score} · {t.pct}%
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Goles y corners */}
-            <div style={panel}>
-              <div
-                style={{
-                  fontWeight: 900,
-                  color: dark ? "#e5e7eb" : "#111827",
-                  marginBottom: 10,
-                }}
-              >
-                GOLES Y CORNERS
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
-                  gap: 12,
-                }}
-              >
-                <div style={statBox}>
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Lambdas (λ)</div>
-                  <div>λ Local: {data.poisson?.home_lambda ?? "—"}</div>
-                  <div>λ Visitante: {data.poisson?.away_lambda ?? "—"}</div>
-                </div>
-                <div style={statBox}>
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Corners</div>
-                  <div>Promedio total: {data.averages.total_corners_avg.toFixed(2)}</div>
-                  <div>Predicción MLP: {data.averages.corners_mlp_pred.toFixed(2)}</div>
-                </div>
-                <div style={statBox}>
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Tarjetas</div>
+                <div style={grid3}>
                   <div>
-                    Promedio total amarillas:{" "}
-                    {data.averages.total_yellow_cards_avg.toFixed(2)}
+                    <div style={label}>Liga</div>
+                    <select
+                      value={L.league}
+                      onChange={(e) => onLeagueChange(idx, e.target.value)}
+                      style={input}
+                    >
+                      <option value="">— Selecciona liga —</option>
+                      {leagues.map((l) => (
+                        <option key={l} value={l}>
+                          {l}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={label}>Equipo local</div>
+                    <input
+                      value={L.home}
+                      onChange={(e) => setLeg(idx, { home: e.target.value })}
+                      list={`home_${idx}`}
+                      placeholder="Escribe…"
+                      style={input}
+                    />
+                    <datalist id={`home_${idx}`}>
+                      {filteredHome.map((t) => (
+                        <option key={t} value={t} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
+                    <div style={label}>Equipo visitante</div>
+                    <input
+                      value={L.away}
+                      onChange={(e) => setLeg(idx, { away: e.target.value })}
+                      list={`away_${idx}`}
+                      placeholder="Escribe…"
+                      style={input}
+                    />
+                    <datalist id={`away_${idx}`}>
+                      {filteredAway.map((t) => (
+                        <option key={t} value={t} />
+                      ))}
+                    </datalist>
                   </div>
                 </div>
-              </div>
-            </div>
-          </>
-        )}
 
-        {/* Footer */}
-        <div style={{ marginTop: 28, opacity: 0.6, fontSize: 12 }}>
-          *Modelo: Poisson + BTTS + MLP (corners y O2.5). Uso informativo; no constituye
-          asesoría financiera.
+                <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }}>
+                  <button
+                    onClick={() => predictLeg(idx)}
+                    disabled={L.loading}
+                    style={{
+                      ...primaryBtn,
+                      opacity: L.loading ? 0.6 : 1,
+                      cursor: L.loading ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {L.loading ? "Calculando…" : "Obtener pick IA"}
+                  </button>
+                  {L.error && (
+                    <div
+                      style={{
+                        background: "rgba(239,68,68,.12)",
+                        border: "1px solid rgba(239,68,68,.3)",
+                        color: "#fecaca",
+                        padding: 8,
+                        borderRadius: 10,
+                      }}
+                    >
+                      {L.error}
+                    </div>
+                  )}
+                </div>
+
+                {L.result && (
+                  <div style={{ marginTop: 12, ...cardGradient }}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                      Pick recomendado:
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 900 }}>
+                      {L.result.best_pick.market} — {L.result.best_pick.selection}
+                    </div>
+                    <div>
+                      Prob: <b>{pct(L.result.best_pick.prob_pct)}</b> · Confianza:{" "}
+                      <b>{pct(L.result.best_pick.confidence)}</b>
+                    </div>
+                    <div style={{ marginTop: 8, opacity: 0.8 }}>
+                      {L.result.summary}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
+
+        {/* Resumen parley */}
+        <div style={{ marginTop: 16, ...cardGradient }}>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>Resumen del parley</div>
+          <div>
+            Probabilidad combinada:{" "}
+            <b>{pct(combinedProb01 * 100)}</b>
+          </div>
+          {!allReady && (
+            <div style={{ marginTop: 6, opacity: 0.75 }}>
+              Completa y calcula los {legsRequired} picks para ver el parley sugerido.
+            </div>
+          )}
+          {allReady && (
+            <div style={{ marginTop: 10 }}>
+              ✅ Recomendación: combinar las <b>{legsRequired}</b> mejores jugadas
+              sugeridas. Si la probabilidad combinada supera ~35–40% y las cuotas
+              son razonables, puede considerarse como **parley seguro** según la IA.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== App (Router simple) ===================== */
+export default function App() {
+  const [dark, setDark] = useState(true);
+  const [drawer, setDrawer] = useState(false);
+  const [view, setView] = useState<View>("calc");
+
+  const [leagues, setLeagues] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/leagues`)
+      .then((r) => r.json())
+      .then((d: ApiLeagues) => setLeagues(d.leagues ?? []))
+      .catch(() => setLeagues([]));
+  }, []);
+
+  return (
+    <div style={{ ...page, backgroundColor: dark ? undefined : "#f6f7fb", color: dark ? "#e5e7eb" : "#0b1020" }}>
+      <Drawer
+        open={drawer}
+        onClose={() => setDrawer(false)}
+        view={view}
+        setView={setView}
+      />
+      <div style={wrap}>
+        <Header dark={dark} setDark={setDark} onOpenMenu={() => setDrawer(true)} />
+
+        {view === "calc" && <Calculadora dark={dark} leagues={leagues} />}
+        {view === "parley2" && <ParlayBuilder leagues={leagues} legsRequired={2} />}
+        {view === "parley3" && <ParlayBuilder leagues={leagues} legsRequired={3} />}
+        {view === "parley4" && <ParlayBuilder leagues={leagues} legsRequired={4} />}
       </div>
     </div>
   );
