@@ -1,8 +1,7 @@
 /// <reference types="vite/client" />
-// src/App.tsx
 import React, { useEffect, useState } from "react";
-import EngineSelector from "./components/EngineSelector";
 import {
+  warmup,
   getLeagues,
   getTeams,
   predict,
@@ -14,24 +13,24 @@ import {
 type Status = "idle" | "loading" | "ready" | "error";
 
 export default function App() {
-  const [engine, setEngine] = useState<Engine>("poisson"); // cambia a "dc" si prefieres por defecto
+  const [engine, setEngine] = useState<Engine>("poisson");
   const [status, setStatus] = useState<Status>("idle");
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState("");
 
   const [leagues, setLeagues] = useState<string[]>([]);
-  const [league, setLeague] = useState<string>("");
-
+  const [league, setLeague] = useState("");
   const [teams, setTeams] = useState<string[]>([]);
-  const [home, setHome] = useState<string>("");
-  const [away, setAway] = useState<string>("");
+  const [home, setHome] = useState("");
+  const [away, setAway] = useState("");
 
   const [result, setResult] = useState<PredictResponse | null>(null);
 
-  // Carga de ligas al montar
+  // Calienta el backend y luego carga ligas
   useEffect(() => {
     (async () => {
       try {
         setStatus("loading");
+        await warmup();
         const { leagues } = await getLeagues();
         setLeagues(leagues);
         if (leagues.length) setLeague(leagues[0]);
@@ -43,12 +42,11 @@ export default function App() {
     })();
   }, []);
 
-  // Carga de equipos cuando cambia la liga
+  // Cargar equipos al cambiar liga
   useEffect(() => {
     if (!league) return;
     (async () => {
       try {
-        setError("");
         setStatus("loading");
         const { teams } = await getTeams(league);
         setTeams(teams);
@@ -68,12 +66,7 @@ export default function App() {
     setError("");
     setResult(null);
     try {
-      const data = await predict({
-        league,
-        home_team: home,
-        away_team: away,
-        engine, // clave: envía Poisson o Dixon-Coles al backend
-      });
+      const data = await predict({ league, home_team: home, away_team: away, engine });
       setResult(data);
       setStatus("ready");
     } catch (e) {
@@ -85,21 +78,18 @@ export default function App() {
   const disabled = !league || !home || !away || status === "loading";
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-900 to-slate-950 text-slate-100">
-      <div className="mx-auto max-w-5xl p-4">
-        {/* Header */}
-        <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Footy Predictions</h1>
-            <p className="text-sm opacity-70">
-              Probabilidades reales con Poisson y Dixon-Coles (ponderación por recencia).
-            </p>
-          </div>
-          <EngineSelector value={engine} onChange={setEngine} />
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto max-w-4xl p-4">
+        {/* Header simple */}
+        <header className="mb-5">
+          <h1 className="text-2xl font-extrabold">Footy Predictions</h1>
+          <p className="text-sm opacity-80">
+            Probabilidades reales con Poisson y Dixon-Coles (ponderación por recencia).
+          </p>
         </header>
 
         {/* Controles */}
-        <section className="rounded-xl border border-white/10 bg-white/5 p-4 mb-4">
+        <section className="rounded-xl border border-white/10 bg-white/5 p-4">
           <div className="grid gap-3 sm:grid-cols-3">
             <select
               className="w-full rounded border border-zinc-700 bg-zinc-900 p-2"
@@ -125,7 +115,7 @@ export default function App() {
                 Equipo local
               </option>
               {teams.map((t) => (
-                <option key={`H-${t}`} value={t}>
+                <option key={"H-" + t} value={t}>
                   {t}
                 </option>
               ))}
@@ -140,24 +130,32 @@ export default function App() {
                 Equipo visitante
               </option>
               {teams.map((t) => (
-                <option key={`A-${t}`} value={t}>
+                <option key={"A-" + t} value={t}>
                   {t}
                 </option>
               ))}
             </select>
           </div>
 
-          <div className="mt-4 flex items-center gap-3">
+          {/* Motor */}
+          <div className="mt-3 flex items-center gap-3 text-sm">
+            <label className="opacity-80">Motor:</label>
+            <select
+              className="rounded border border-zinc-700 bg-zinc-900 p-1.5"
+              value={engine}
+              onChange={(e) => setEngine(e.target.value as Engine)}
+            >
+              <option value="poisson">Poisson</option>
+              <option value="dc">Dixon-Coles</option>
+            </select>
+
             <button
               onClick={onPredict}
               disabled={disabled}
-              className="rounded bg-indigo-600 px-4 py-2 font-medium hover:bg-indigo-500 disabled:opacity-50"
+              className="ml-auto rounded bg-indigo-600 px-4 py-2 font-medium hover:bg-indigo-500 disabled:opacity-50"
             >
-              {status === "loading" ? "Calculando..." : "Predecir"}
+              {status === "loading" ? "Calculando…" : "Predecir"}
             </button>
-            <div className="text-sm opacity-70">
-              Motor: <span className="font-semibold">{engine === "dc" ? "Dixon-Coles" : "Poisson"}</span>
-            </div>
           </div>
 
           {error && (
@@ -168,17 +166,16 @@ export default function App() {
         </section>
 
         {/* Resultado */}
-        {result && (
-          <section className="grid gap-4">
-            {/* Mejor jugada */}
-            <article className="rounded-2xl border border-white/10 bg-gradient-to-br from-indigo-600/20 to-purple-600/20 p-4">
+        {result && status === "ready" && (
+          <section className="mt-5 grid gap-4">
+            <article className="rounded-xl border border-white/10 bg-white/5 p-4">
               <div className="text-xs uppercase opacity-70 mb-1">Mejor jugada</div>
-              <div className="text-lg font-semibold">
+              <div className="text-base font-semibold">
                 {result.best_pick.market} — {result.best_pick.selection}
               </div>
               <div className="text-sm opacity-90">
-                Prob: <span className="font-medium">{result.best_pick.prob_pct}%</span> ·
-                Confianza: <span className="font-medium">{Math.round(result.best_pick.confidence)}%</span>
+                Prob: <b>{result.best_pick.prob_pct}%</b> · Confianza:{" "}
+                <b>{Math.round(result.best_pick.confidence)}%</b>
               </div>
               <ul className="mt-3 list-disc pl-5 text-sm opacity-95 space-y-1">
                 {result.best_pick.reasons.map((r, i) => (
@@ -188,39 +185,21 @@ export default function App() {
               <div className="mt-3 text-sm">{result.summary}</div>
             </article>
 
-            {/* 1X2 / O2.5 / AA */}
             <article className="rounded-xl border border-white/10 bg-white/5 p-4">
               <div className="text-xs uppercase opacity-70 mb-2">Mercados</div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
-                <div>
-                  <span className="opacity-80">1:</span> {result.probs.home_win_pct}%
-                </div>
-                <div>
-                  <span className="opacity-80">X:</span> {result.probs.draw_pct}%
-                </div>
-                <div>
-                  <span className="opacity-80">2:</span> {result.probs.away_win_pct}%
-                </div>
-                <div>
-                  <span className="opacity-80">O2.5:</span> {result.probs.over_2_5_pct}%
-                </div>
-                <div>
-                  <span className="opacity-80">AA:</span> {result.probs.btts_pct}%
-                </div>
-                <div>
-                  <span className="opacity-80">O2.5 (MLP):</span> {result.probs.o25_mlp_pct}%
-                </div>
+                <div>1: {result.probs.home_win_pct}%</div>
+                <div>X: {result.probs.draw_pct}%</div>
+                <div>2: {result.probs.away_win_pct}%</div>
+                <div>O2.5: {result.probs.over_2_5_pct}%</div>
+                <div>AA: {result.probs.btts_pct}%</div>
+                <div>O2.5 (MLP): {result.probs.o25_mlp_pct}%</div>
               </div>
-            </article>
-
-            {/* Lambdas y top marcadores */}
-            <article className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <div className="text-xs uppercase opacity-70 mb-2">Lambdas y marcadores</div>
-              <div className="text-sm">
-                λ Local: <span className="font-medium">{result.poisson.home_lambda}</span> · λ Visitante:{" "}
-                <span className="font-medium">{result.poisson.away_lambda}</span>
+              <div className="mt-3 text-sm opacity-80">
+                λ Local: <b>{result.poisson.home_lambda}</b> · λ Visitante:{" "}
+                <b>{result.poisson.away_lambda}</b>
               </div>
-              <div className="mt-2 text-sm opacity-90">
+              <div className="mt-1 text-sm opacity-90">
                 Top marcadores:{" "}
                 {result.poisson.top_scorelines
                   .slice(0, 5)
@@ -234,5 +213,3 @@ export default function App() {
     </div>
   );
 }
-
-
