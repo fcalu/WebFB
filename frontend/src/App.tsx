@@ -8,8 +8,8 @@ type ApiTeams = { teams: string[] };
 type BestPick = {
   market: string;
   selection: string;
-  prob_pct: number;      // 0-100
-  confidence: number;    // 0-100
+  prob_pct: number;
+  confidence: number;
   reasons: string[];
   summary: string;
 };
@@ -48,10 +48,9 @@ const API_BASE: string =
 
 const pct = (n?: number) =>
   n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`;
-
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
-/* ===================== Styles ===================== */
+/* ===================== Base styles (inline) ===================== */
 const page: React.CSSProperties = {
   minHeight: "100vh",
   background:
@@ -65,33 +64,6 @@ const wrap: React.CSSProperties = {
   maxWidth: 1200,
   margin: "0 auto",
   padding: "28px 18px 80px",
-};
-
-const headerRow: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 12,
-  marginBottom: 14,
-};
-
-const brandRow: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 14,
-};
-
-const pill: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 8,
-  padding: "6px 12px",
-  borderRadius: 999,
-  background: "rgba(255,255,255,.06)",
-  border: "1px solid rgba(255,255,255,.08)",
-  color: "#cbd5e1",
-  fontSize: 14,
-  cursor: "default",
 };
 
 const actionBtn = (primary = false): React.CSSProperties => ({
@@ -113,12 +85,6 @@ const panel: React.CSSProperties = {
   border: "1px solid rgba(255,255,255,.08)",
   borderRadius: 18,
   padding: 18,
-};
-
-const grid3: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr 1fr",
-  gap: 14,
 };
 
 const label: React.CSSProperties = {
@@ -165,6 +131,19 @@ const statBox: React.CSSProperties = {
   color: "#c7cdd5",
 };
 
+const pill: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "6px 12px",
+  borderRadius: 999,
+  background: "rgba(255,255,255,.06)",
+  border: "1px solid rgba(255,255,255,.08)",
+  color: "#cbd5e1",
+  fontSize: 14,
+  cursor: "default",
+};
+
 /* ===================== Header + Drawer ===================== */
 type View = "calc" | "parley2" | "parley3" | "parley4";
 
@@ -178,9 +157,8 @@ function Header({
   onOpenMenu: () => void;
 }) {
   return (
-    <div style={headerRow}>
-      <div style={brandRow}>
-        {/* Hamburguesa */}
+    <div className="fm-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+      <div className="fm-brand" style={{ display: "flex", alignItems: "center", gap: 14 }}>
         <button
           onClick={onOpenMenu}
           style={{
@@ -220,7 +198,7 @@ function Header({
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div className="fm-actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <button style={actionBtn(false)}>↻ Historial</button>
         <button
           style={actionBtn(false)}
@@ -248,7 +226,6 @@ function Drawer({
 }) {
   return (
     <>
-      {/* overlay */}
       <div
         onClick={onClose}
         style={{
@@ -260,8 +237,8 @@ function Drawer({
           zIndex: 40,
         }}
       />
-      {/* drawer */}
       <div
+        className="fm-drawer"
         style={{
           position: "fixed",
           top: 0,
@@ -352,7 +329,7 @@ function MenuItem({
   );
 }
 
-/* ===================== Calculadora (igual a tu diseño) ===================== */
+/* ===================== Calculadora ===================== */
 function Calculadora({
   dark,
   leagues,
@@ -416,16 +393,14 @@ function Calculadora({
 
   return (
     <>
-      {/* Badges */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 18 }}>
+      <div style={{ display: "flex", gap: 12, marginBottom: 18 }} className="fm-badges">
         <div style={pill}>🛡️ Poisson</div>
         <div style={pill}>🛡️ BTTS</div>
         <div style={pill}>🛡️ MLP Corners</div>
       </div>
 
-      {/* Search */}
-      <div style={{ ...panel, padding: 22, marginBottom: 18 }}>
-        <div style={grid3}>
+      <div style={{ ...panel, padding: 22, marginBottom: 18 }} className="fm-panel">
+        <div className="fm-grid3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
           <div>
             <div style={label}>Liga</div>
             <select
@@ -473,8 +448,9 @@ function Calculadora({
           </div>
         </div>
 
-        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16 }} className="fm-cta-row">
           <button
+            className="fm-primary-btn"
             style={{
               ...primaryBtn,
               opacity: !canPredict || loading ? 0.6 : 1,
@@ -493,7 +469,6 @@ function Calculadora({
         </div>
       </div>
 
-      {/* Error */}
       {err && (
         <div
           style={{
@@ -509,14 +484,13 @@ function Calculadora({
         </div>
       )}
 
-      {/* Resultado */}
       {data && (
         <>
-          <div style={{ ...cardGradient, marginBottom: 18 }}>
+          <div style={{ ...cardGradient, marginBottom: 18 }} className="fm-card">
             <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.85, marginBottom: 6 }}>
               Mejor predicción
             </div>
-            <div style={{ fontSize: 30, fontWeight: 900, lineHeight: 1.2, marginBottom: 6 }}>
+            <div style={{ fontSize: 30, fontWeight: 900, lineHeight: 1.2, marginBottom: 6 }} className="fm-title-xl">
               {data.best_pick.market} — {data.best_pick.selection}
             </div>
             <div style={{ fontSize: 16, marginBottom: 12 }}>
@@ -535,9 +509,10 @@ function Calculadora({
             <div style={{ marginTop: 10, opacity: 0.9 }}>{data.summary}</div>
           </div>
 
-          <div style={{ ...panel, marginBottom: 18 }}>
+          <div style={{ ...panel, marginBottom: 18 }} className="fm-panel">
             <div style={{ fontWeight: 900, marginBottom: 10 }}>MERCADOS</div>
             <div
+              className="fm-grid-auto"
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
@@ -571,9 +546,10 @@ function Calculadora({
             </div>
           </div>
 
-          <div style={panel}>
+          <div style={panel} className="fm-panel">
             <div style={{ fontWeight: 900, marginBottom: 10 }}>GOLES Y CORNERS</div>
             <div
+              className="fm-grid-auto"
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))",
@@ -689,7 +665,6 @@ function ParlayBuilder({
     }
   }
 
-  // Probabilidad combinada (producto de las mejores jugadas)
   const combinedProb01 = useMemo(() => {
     const probs = legs
       .map((l) => l.result?.best_pick?.prob_pct)
@@ -705,7 +680,7 @@ function ParlayBuilder({
 
   return (
     <div>
-      <div style={{ ...panel, padding: 22, marginBottom: 18 }}>
+      <div style={{ ...panel, padding: 22, marginBottom: 18 }} className="fm-panel">
         <div style={{ fontWeight: 900, marginBottom: 10 }}>
           Construye tu parley — {legsRequired} selecciones
         </div>
@@ -720,11 +695,11 @@ function ParlayBuilder({
             );
 
             return (
-              <div key={idx} style={{ ...panel }}>
+              <div key={idx} style={{ ...panel }} className="fm-panel">
                 <div style={{ fontWeight: 800, marginBottom: 8 }}>
                   Leg #{idx + 1}
                 </div>
-                <div style={grid3}>
+                <div className="fm-grid3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
                   <div>
                     <div style={label}>Liga</div>
                     <select
@@ -772,8 +747,9 @@ function ParlayBuilder({
                   </div>
                 </div>
 
-                <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }}>
+                <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }} className="fm-cta-row">
                   <button
+                    className="fm-primary-btn"
                     onClick={() => predictLeg(idx)}
                     disabled={L.loading}
                     style={{
@@ -800,7 +776,7 @@ function ParlayBuilder({
                 </div>
 
                 {L.result && (
-                  <div style={{ marginTop: 12, ...cardGradient }}>
+                  <div style={{ marginTop: 12, ...cardGradient }} className="fm-card">
                     <div style={{ fontWeight: 800, marginBottom: 6 }}>
                       Pick recomendado:
                     </div>
@@ -821,12 +797,10 @@ function ParlayBuilder({
           })}
         </div>
 
-        {/* Resumen parley */}
-        <div style={{ marginTop: 16, ...cardGradient }}>
+        <div style={{ marginTop: 16, ...cardGradient }} className="fm-card">
           <div style={{ fontWeight: 900, marginBottom: 6 }}>Resumen del parley</div>
           <div>
-            Probabilidad combinada:{" "}
-            <b>{pct(combinedProb01 * 100)}</b>
+            Probabilidad combinada: <b>{pct(combinedProb01 * 100)}</b>
           </div>
           {!allReady && (
             <div style={{ marginTop: 6, opacity: 0.75 }}>
@@ -835,9 +809,9 @@ function ParlayBuilder({
           )}
           {allReady && (
             <div style={{ marginTop: 10 }}>
-              ✅ Recomendación: combinar las <b>{legsRequired}</b> mejores jugadas
-              sugeridas. Si la probabilidad combinada supera ~35–40% y las cuotas
-              son razonables, puede considerarse como **parley seguro** según la IA.
+              ✅ Recomendación: combinar las <b>{legsRequired}</b> mejores jugadas sugeridas.
+              Si la probabilidad combinada supera ~35–40% y las cuotas son razonables,
+              puede considerarse como **parley seguro** según la IA.
             </div>
           )}
         </div>
@@ -846,12 +820,11 @@ function ParlayBuilder({
   );
 }
 
-/* ===================== App (Router simple) ===================== */
+/* ===================== App ===================== */
 export default function App() {
   const [dark, setDark] = useState(true);
   const [drawer, setDrawer] = useState(false);
   const [view, setView] = useState<View>("calc");
-
   const [leagues, setLeagues] = useState<string[]>([]);
 
   useEffect(() => {
@@ -862,7 +835,36 @@ export default function App() {
   }, []);
 
   return (
-    <div style={{ ...page, backgroundColor: dark ? undefined : "#f6f7fb", color: dark ? "#e5e7eb" : "#0b1020" }}>
+    <div
+      style={{
+        ...page,
+        backgroundColor: dark ? undefined : "#f6f7fb",
+        color: dark ? "#e5e7eb" : "#0b1020",
+      }}
+    >
+      {/* CSS RESPONSIVE in-app */}
+      <style>{`
+        /* apilado mobile */
+        .fm-header { flex-wrap: wrap; }
+        @media (max-width: 720px) {
+          .fm-header { flex-direction: column; align-items: stretch; gap: 10px; }
+          .fm-brand { gap: 10px; }
+          .fm-actions { width: 100%; justify-content: space-between; }
+          .fm-drawer { width: 85vw; }
+          .fm-panel { padding: 16px !important; }
+          .fm-card { padding: 16px !important; border-radius: 16px !important; }
+          .fm-grid3 { grid-template-columns: 1fr !important; }
+          .fm-primary-btn { width: 100%; }
+          .fm-cta-row { flex-direction: column; align-items: stretch !important; gap: 10px !important; }
+          .fm-badges { flex-wrap: wrap; }
+          .fm-title-xl { font-size: 22px !important; }
+        }
+        /* tablet */
+        @media (min-width: 721px) and (max-width: 1024px) {
+          .fm-grid3 { grid-template-columns: 1fr 1fr !important; }
+        }
+      `}</style>
+
       <Drawer
         open={drawer}
         onClose={() => setDrawer(false)}
