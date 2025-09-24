@@ -3,5 +3,5 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  server: { host: true, port: 5173 }, // el proxy ya no es necesario para Vercel
+  server: { host: true, port: 5173 }
 });
