@@ -18,6 +18,10 @@ BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")
 ART_DIR  = os.path.join(BASE_DIR, "artifacts")
 
+# === feature flags para volver a lo "normal" ===
+USE_DC = os.getenv("USE_DC", "0") == "1"    # por defecto APAGADO
+USE_MLP = os.getenv("USE_MLP", "0") == "1"  # por defecto APAGADO
+
 # (ya NO entrenamos on-start ni on-demand)
 SKIP_TRAIN_ON_STARTUP = True
 DC_HALFLIFE_DAYS = 180
@@ -253,7 +257,7 @@ def _startup():
     _load_frames()
     _load_artifacts()
     print(f"[BOOT] ligas={len(frames)} mlp={len(mlp_models)} dc={len(dc_models)}")
-
+    
 @app.get("/")
 def root():
     return {"ok": True, "service": "Footy Predictions API", "docs": "/docs", "health": "/health"}
