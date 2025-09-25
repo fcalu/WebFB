@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 type ApiLeagues = { leagues: string[] };
 type ApiTeams = { teams: string[] };
 
-type BestPick = {
+/** ---- Formato ANTIGUO (tu app actual) ---- */
+type BestPickOld = {
   market: string;
   selection: string;
   prob_pct: number;
@@ -13,8 +14,7 @@ type BestPick = {
   reasons: string[];
   summary: string;
 };
-
-type PredictResponse = {
+type PredictResponseOld = {
   league: string;
   home_team: string;
   away_team: string;
@@ -36,9 +36,38 @@ type PredictResponse = {
     total_corners_avg: number;
     corners_mlp_pred: number;
   };
-  best_pick: BestPick;
+  best_pick: BestPickOld;
   summary: string;
 };
+
+/** ---- Formato NUEVO (backend DC + odds + IA) ---- */
+type ValueRow = {
+  market: string;
+  prob_model: number;   // 0..1
+  fair_odds: number;
+  odd: number;
+  edge_pct: number;
+  ev: number;
+  kelly_frac: number;
+};
+type BestPickProb = { market: string; prob: number; confidence: number; why: string[] };
+type PredictResponseNew = {
+  league: string;
+  home_team: string;
+  away_team: string;
+  lambda_home: number;
+  lambda_away: number;
+  markets: Record<string, number>; // 0..1
+  best_pick_prob: BestPickProb;
+  best_value_pick?: ValueRow | null;
+  value_table: ValueRow[];
+  top_scores: { home: number; away: number; p: number }[];
+  blend_detail?: Record<string, { model: number; market?: number }> | null;
+  legend?: string;
+  ai_analysis?: string | null;
+};
+
+type PredictAny = PredictResponseOld | PredictResponseNew;
 
 /* ===================== Config ===================== */
 const API_BASE: string =
@@ -157,8 +186,20 @@ function Header({
   onOpenMenu: () => void;
 }) {
   return (
-    <div className="fm-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
-      <div className="fm-brand" style={{ display: "flex", alignItems: "center", gap: 14 }}>
+    <div
+      className="fm-header"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        marginBottom: 14,
+      }}
+    >
+      <div
+        className="fm-brand"
+        style={{ display: "flex", alignItems: "center", gap: 14 }}
+      >
         <button
           onClick={onOpenMenu}
           style={{
@@ -198,7 +239,10 @@ function Header({
         </div>
       </div>
 
-      <div className="fm-actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div
+        className="fm-actions"
+        style={{ display: "flex", alignItems: "center", gap: 10 }}
+      >
         <button style={actionBtn(false)}>↻ Historial</button>
         <button
           style={actionBtn(false)}
@@ -329,6 +373,35 @@ function MenuItem({
   );
 }
 
+/* ===================== Helpers NUEVOS ===================== */
+function labelMarket(k: string) {
+  const map: Record<string, string> = {
+    "1": "1 (Local)",
+    "X": "Empate",
+    "2": "2 (Visitante)",
+    "1X": "Doble: 1X",
+    "12": "Doble: 12",
+    "X2": "Doble: X2",
+    "BTTS": "Ambos anotan",
+    "O1_5": "Over 1.5",
+    "U1_5": "Under 1.5",
+    "O2_5": "Over 2.5",
+    "U2_5": "Under 2.5",
+    "O3_5": "Over 3.5",
+    "U3_5": "Under 3.5",
+    "1_&_U3_5": "Gana local & U3.5",
+    "1_&_O2_5": "Gana local & O2.5",
+    "2_&_U3_5": "Gana visita & U3.5",
+    "2_&_O2_5": "Gana visita & O2.5",
+  };
+  return map[k] ?? k;
+}
+const toPct = (p: number) => `${(p * 100).toFixed(2)}%`;
+
+function isNew(resp: PredictAny): resp is PredictResponseNew {
+  return (resp as any)?.markets !== undefined;
+}
+
 /* ===================== Calculadora ===================== */
 function Calculadora({
   dark,
@@ -341,9 +414,18 @@ function Calculadora({
   const [teams, setTeams] = useState<string[]>([]);
   const [home, setHome] = useState("");
   const [away, setAway] = useState("");
+
+  // NUEVO: Odds + IA
+  const [odds, setOdds] = useState<Record<string, string>>({});
+  const [kickoff, setKickoff] = useState<string>("");
+  const [blend, setBlend] = useState<boolean>(true);
+  const [withAI, setWithAI] = useState<boolean>(false);
+  const [aiModel, setAiModel] = useState<string>("gpt-4o-mini");
+  const [aiLang, setAiLang] = useState<string>("es");
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [data, setData] = useState<PredictResponse | null>(null);
+  const [data, setData] = useState<PredictAny | null>(null);
 
   useEffect(() => {
     setHome("");
@@ -370,19 +452,43 @@ function Calculadora({
     [teams, away]
   );
 
+  function buildOddsPayload() {
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(odds)) {
+      const num = Number(String(v).replace(",", "."));
+      if (Number.isFinite(num) && num > 0) out[k] = num;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
   async function onPredict() {
     if (!canPredict) return;
     setLoading(true);
     setErr("");
     setData(null);
     try {
+      const payload: any = {
+        league,
+        home_team: home,
+        away_team: away,
+      };
+      const o = buildOddsPayload();
+      if (o) payload.odds = o;
+      if (kickoff) payload.kickoff_utc = kickoff;
+      if (o) payload.blend_with_market = blend;
+      if (withAI) {
+        payload.with_ai = true;
+        payload.ai_model = aiModel;
+        payload.ai_lang = aiLang;
+      }
+
       const res = await fetch(`${API_BASE}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ league, home_team: home, away_team: away }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
-      const json: PredictResponse = await res.json();
+      const json: PredictAny = await res.json();
       setData(json);
     } catch (e: any) {
       setErr(e?.message || "Error al predecir.");
@@ -391,16 +497,163 @@ function Calculadora({
     }
   }
 
+  // NUEVO: chips de mercados para respuesta nueva
+  function MarketsChips({ markets }: { markets: Record<string, number> }) {
+    const keys = [
+      "1",
+      "X",
+      "2",
+      "1X",
+      "12",
+      "X2",
+      "BTTS",
+      "O2_5",
+      "U2_5",
+      "O3_5",
+      "U3_5",
+      "1_&_U3_5",
+      "2_&_U3_5",
+      "1_&_O2_5",
+      "2_&_O2_5",
+    ];
+    return (
+      <div style={{ ...panel, marginBottom: 18 }}>
+        <div style={{ fontWeight: 900, marginBottom: 10 }}>
+          MERCADOS (probabilidad)
+        </div>
+        <div
+          style={{ display: "flex", flexWrap: "wrap", gap: 8 }}
+          className="fm-badges"
+        >
+          {keys
+            .filter((k) => k in markets)
+            .map((k) => (
+              <div key={k} style={pill}>
+                <span style={{ opacity: 0.8, marginRight: 6 }}>
+                  {labelMarket(k)}:
+                </span>
+                <b>{toPct(markets[k])}</b>
+              </div>
+            ))}
+        </div>
+      </div>
+    );
+  }
+
+  // NUEVO: tabla de valor
+  function ValueTable({ rows }: { rows: ValueRow[] }) {
+    if (!rows?.length) return null;
+    return (
+      <div style={{ ...panel, marginBottom: 18 }}>
+        <div className="mb-3" style={{ fontWeight: 900, marginBottom: 8 }}>
+          Value table (EV/Kelly)
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table className="min-w-full" style={{ fontSize: 14, width: "100%" }}>
+            <thead style={{ opacity: 0.7, fontSize: 12 }}>
+              <tr style={{ textAlign: "left" }}>
+                <th style={{ padding: "6px 10px" }}>Mercado</th>
+                <th style={{ padding: "6px 10px" }}>Prob%</th>
+                <th style={{ padding: "6px 10px" }}>Cuota justa</th>
+                <th style={{ padding: "6px 10px" }}>Tu cuota</th>
+                <th style={{ padding: "6px 10px" }}>Edge</th>
+                <th style={{ padding: "6px 10px" }}>EV</th>
+                <th style={{ padding: "6px 10px" }}>Kelly</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr
+                  key={r.market}
+                  style={{
+                    borderTop: "1px solid rgba(255,255,255,.08)",
+                  }}
+                >
+                  <td style={{ padding: "8px 10px", fontWeight: 700 }}>
+                    {labelMarket(r.market)}
+                  </td>
+                  <td style={{ padding: "8px 10px" }}>
+                    {(r.prob_model * 100).toFixed(1)}%
+                  </td>
+                  <td style={{ padding: "8px 10px" }}>
+                    {r.fair_odds.toFixed(2)}
+                  </td>
+                  <td style={{ padding: "8px 10px" }}>{r.odd.toFixed(2)}</td>
+                  <td style={{ padding: "8px 10px" }}>
+                    <span
+                      style={{
+                        color: r.edge_pct >= 0 ? "#34d399" : "#f87171",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {r.edge_pct.toFixed(2)}%
+                    </span>
+                  </td>
+                  <td style={{ padding: "8px 10px" }}>
+                    <span
+                      style={{
+                        color: r.ev >= 0 ? "#34d399" : "#f87171",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {r.ev.toFixed(3)}
+                    </span>
+                  </td>
+                  <td style={{ padding: "8px 10px" }}>
+                    {(r.kelly_frac * 100).toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // NUEVO: best value card
+  function BestValueCard({ pick }: { pick?: ValueRow | null }) {
+    if (!pick) return null;
+    return (
+      <div style={{ ...cardGradient, marginBottom: 18 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.85, marginBottom: 6 }}>
+          Mejor valor (EV)
+        </div>
+        <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.2, marginBottom: 6 }}>
+          {labelMarket(pick.market)}
+        </div>
+        <div style={{ fontSize: 14, marginBottom: 6 }}>
+          Prob: <b>{(pick.prob_model * 100).toFixed(1)}%</b> · Cuota justa:{" "}
+          <b>{pick.fair_odds.toFixed(2)}</b> · Tu cuota: <b>{pick.odd.toFixed(2)}</b>
+        </div>
+        <div style={{ fontSize: 14 }}>
+          Edge:{" "}
+          <b style={{ color: pick.edge_pct >= 0 ? "#34d399" : "#f87171" }}>
+            {pick.edge_pct.toFixed(2)}%
+          </b>{" "}
+          · Kelly: <b>{(pick.kelly_frac * 100).toFixed(1)}%</b>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      <div style={{ display: "flex", gap: 12, marginBottom: 18 }} className="fm-badges">
-        <div style={pill}>🛡️ Poisson</div>
+      <div
+        style={{ display: "flex", gap: 12, marginBottom: 18 }}
+        className="fm-badges"
+      >
+        <div style={pill}>🛡️ Poisson/DC</div>
         <div style={pill}>🛡️ BTTS</div>
-        <div style={pill}>🛡️ MLP Corners</div>
+        <div style={pill}>🛡️ Odds Blend</div>
+        <div style={pill}>🤖 IA</div>
       </div>
 
       <div style={{ ...panel, padding: 22, marginBottom: 18 }} className="fm-panel">
-        <div className="fm-grid3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+        <div
+          className="fm-grid3"
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}
+        >
           <div>
             <div style={label}>Liga</div>
             <select
@@ -448,7 +701,118 @@ function Calculadora({
           </div>
         </div>
 
-        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16 }} className="fm-cta-row">
+        {/* NUEVO: Cuotas + Kickoff + IA */}
+        <div
+          style={{
+            marginTop: 18,
+            display: "grid",
+            gridTemplateColumns: "2fr 1fr",
+            gap: 14,
+          }}
+        >
+          <div style={{ ...panel }}>
+            <div style={{ fontWeight: 900, marginBottom: 10 }}>Cuotas (opcionales)</div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))",
+                gap: 10,
+              }}
+            >
+              {["1", "X", "2", "O2_5", "U2_5", "BTTS", "NOBTTS", "O3_5", "U3_5"].map(
+                (k) => (
+                  <div key={k}>
+                    <div style={label}>{labelMarket(k)}</div>
+                    <input
+                      placeholder="2.00"
+                      value={odds[k] ?? ""}
+                      onChange={(e) =>
+                        setOdds((p) => ({ ...p, [k]: e.target.value }))
+                      }
+                      style={input}
+                      inputMode="decimal"
+                    />
+                  </div>
+                )
+              )}
+            </div>
+
+            <div
+              style={{
+                marginTop: 12,
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+              }}
+            >
+              <div>
+                <div style={label}>Kickoff (UTC, ISO 8601)</div>
+                <input
+                  type="datetime-local"
+                  value={kickoff ? kickoff.substring(0, 16) : ""}
+                  onChange={(e) =>
+                    setKickoff(e.target.value ? new Date(e.target.value).toISOString() : "")
+                  }
+                  style={input}
+                />
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.8, alignSelf: "end" }}>
+                Sugerencia: ingresa las cuotas ~5 horas antes del partido para un cálculo
+                más preciso.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ ...panel }}>
+            <div style={{ fontWeight: 900, marginBottom: 10 }}>Análisis</div>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 14 }}>
+              <input
+                type="checkbox"
+                checked={blend}
+                onChange={(e) => setBlend(e.target.checked)}
+              />
+              Mezclar modelo con mercado (log-odds)
+            </label>
+            <label
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                fontSize: 14,
+                marginTop: 8,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={withAI}
+                onChange={(e) => setWithAI(e.target.checked)}
+              />
+              Incluir análisis IA
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+              <div>
+                <div style={label}>Modelo IA</div>
+                <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} style={input}>
+                  <option value="gpt-4o-mini">gpt-4o-mini</option>
+                  <option value="gpt-4o">gpt-4o</option>
+                </select>
+              </div>
+              <div>
+                <div style={label}>Idioma</div>
+                <select value={aiLang} onChange={(e) => setAiLang(e.target.value)} style={input}>
+                  <option value="es">Español</option>
+                  <option value="en">English</option>
+                  <option value="pt">Português</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16 }}
+          className="fm-cta-row"
+        >
           <button
             className="fm-primary-btn"
             style={{
@@ -484,31 +848,86 @@ function Calculadora({
         </div>
       )}
 
+      {/* ==== RESULTADOS ==== */}
       {data && (
         <>
+          {/* CARD PRINCIPAL: usa formato nuevo si existe; si no, muestra el viejo */}
           <div style={{ ...cardGradient, marginBottom: 18 }} className="fm-card">
-            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.85, marginBottom: 6 }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 800,
+                opacity: 0.85,
+                marginBottom: 6,
+              }}
+            >
               Mejor predicción
             </div>
-            <div style={{ fontSize: 30, fontWeight: 900, lineHeight: 1.2, marginBottom: 6 }} className="fm-title-xl">
-              {data.best_pick.market} — {data.best_pick.selection}
-            </div>
-            <div style={{ fontSize: 16, marginBottom: 12 }}>
-              Prob: <b>{pct(data.best_pick.prob_pct)}</b> · Confianza:{" "}
-              <b>{pct(data.best_pick.confidence)}</b>
-            </div>
 
-            <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
-              {data.best_pick.reasons.map((r, i) => (
-                <li key={i} style={{ color: "#d1d5db" }}>
-                  {r}
-                </li>
-              ))}
-            </ul>
-
-            <div style={{ marginTop: 10, opacity: 0.9 }}>{data.summary}</div>
+            {isNew(data) ? (
+              <>
+                <div
+                  style={{
+                    fontSize: 30,
+                    fontWeight: 900,
+                    lineHeight: 1.2,
+                    marginBottom: 6,
+                  }}
+                  className="fm-title-xl"
+                >
+                  {labelMarket(data.best_pick_prob.market)}
+                </div>
+                <div style={{ fontSize: 16, marginBottom: 12 }}>
+                  Prob: <b>{toPct(data.best_pick_prob.prob)}</b> · Confianza:{" "}
+                  <b>{data.best_pick_prob.confidence}%</b>
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+                  {data.best_pick_prob.why.map((r, i) => (
+                    <li key={i} style={{ color: "#d1d5db" }}>
+                      {r}
+                    </li>
+                  ))}
+                </ul>
+                {data.legend && (
+                  <div style={{ marginTop: 10, opacity: 0.9 }}>{data.legend}</div>
+                )}
+              </>
+            ) : (
+              <>
+                <div
+                  style={{
+                    fontSize: 30,
+                    fontWeight: 900,
+                    lineHeight: 1.2,
+                    marginBottom: 6,
+                  }}
+                  className="fm-title-xl"
+                >
+                  {(data as PredictResponseOld).best_pick.market} —{" "}
+                  {(data as PredictResponseOld).best_pick.selection}
+                </div>
+                <div style={{ fontSize: 16, marginBottom: 12 }}>
+                  Prob: <b>{pct((data as PredictResponseOld).best_pick.prob_pct)}</b> ·
+                  Confianza: <b>{pct((data as PredictResponseOld).best_pick.confidence)}</b>
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+                  {(data as PredictResponseOld).best_pick.reasons.map((r, i) => (
+                    <li key={i} style={{ color: "#d1d5db" }}>
+                      {r}
+                    </li>
+                  ))}
+                </ul>
+                <div style={{ marginTop: 10, opacity: 0.9 }}>
+                  {(data as PredictResponseOld).summary}
+                </div>
+              </>
+            )}
           </div>
 
+          {/* NUEVO: Mejor valor (EV/Kelly) */}
+          {isNew(data) && <BestValueCard pick={data.best_value_pick || null} />}
+
+          {/* Bloque mercados / resumen estadístico */}
           <div style={{ ...panel, marginBottom: 18 }} className="fm-panel">
             <div style={{ fontWeight: 900, marginBottom: 10 }}>MERCADOS</div>
             <div
@@ -519,33 +938,58 @@ function Calculadora({
                 gap: 12,
               }}
             >
-              <div style={statBox}>
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>1X2</div>
-                <div>1: {pct(data.probs.home_win_pct)}</div>
-                <div>X: {pct(data.probs.draw_pct)}</div>
-                <div>2: {pct(data.probs.away_win_pct)}</div>
-              </div>
+              {/* 1X2 y goles - usar uno u otro formato */}
+              {!isNew(data) && (
+                <>
+                  <div style={statBox}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>1X2</div>
+                    <div>1: {pct((data as PredictResponseOld).probs.home_win_pct)}</div>
+                    <div>X: {pct((data as PredictResponseOld).probs.draw_pct)}</div>
+                    <div>2: {pct((data as PredictResponseOld).probs.away_win_pct)}</div>
+                  </div>
 
-              <div style={statBox}>
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>Goles</div>
-                <div>Over 2.5: {pct(data.probs.over_2_5_pct)}</div>
-                <div>BTTS Sí: {pct(data.probs.btts_pct)}</div>
-                <div>Over 2.5 (MLP): {pct(data.probs.o25_mlp_pct)}</div>
-              </div>
+                  <div style={statBox}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Goles</div>
+                    <div>Over 2.5: {pct((data as PredictResponseOld).probs.over_2_5_pct)}</div>
+                    <div>BTTS Sí: {pct((data as PredictResponseOld).probs.btts_pct)}</div>
+                    <div>
+                      Over 2.5 (MLP):{" "}
+                      {pct((data as PredictResponseOld).probs.o25_mlp_pct)}
+                    </div>
+                  </div>
+                </>
+              )}
 
+              {isNew(data) && (
+                <div style={{ gridColumn: "1/-1" }}>
+                  <MarketsChips markets={data.markets} />
+                </div>
+              )}
+
+              {/* Top marcadores */}
               <div style={statBox}>
                 <div style={{ fontWeight: 800, marginBottom: 6 }}>
                   Marcadores más probables
                 </div>
-                {(data.poisson?.top_scorelines ?? []).slice(0, 3).map((t) => (
-                  <div key={t.score}>
-                    {t.score} · {t.pct}%
-                  </div>
-                ))}
+                {!isNew(data) &&
+                  (data as PredictResponseOld).poisson?.top_scorelines
+                    ?.slice(0, 3)
+                    .map((t) => (
+                      <div key={t.score}>
+                        {t.score} · {t.pct}%
+                      </div>
+                    ))}
+                {isNew(data) &&
+                  data.top_scores.slice(0, 3).map((t, i) => (
+                    <div key={i}>
+                      {t.home}-{t.away} · {toPct(t.p)}
+                    </div>
+                  ))}
               </div>
             </div>
           </div>
 
+          {/* Goles / corners / tarjetas (formato viejo) o lambdas (nuevo) */}
           <div style={panel} className="fm-panel">
             <div style={{ fontWeight: 900, marginBottom: 10 }}>GOLES Y CORNERS</div>
             <div
@@ -558,35 +1002,73 @@ function Calculadora({
             >
               <div style={statBox}>
                 <div style={{ fontWeight: 800, marginBottom: 6 }}>Lambdas (λ)</div>
-                <div>λ Local: {data.poisson?.home_lambda ?? "—"}</div>
-                <div>λ Visitante: {data.poisson?.away_lambda ?? "—"}</div>
-              </div>
-              <div style={statBox}>
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>Corners</div>
-                <div>Promedio total: {data.averages.total_corners_avg.toFixed(2)}</div>
-                <div>Predicción MLP: {data.averages.corners_mlp_pred.toFixed(2)}</div>
-              </div>
-              <div style={statBox}>
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>Tarjetas</div>
                 <div>
-                  Promedio total amarillas:{" "}
-                  {data.averages.total_yellow_cards_avg.toFixed(2)}
+                  λ Local:{" "}
+                  {isNew(data)
+                    ? data.lambda_home.toFixed(2)
+                    : (data as PredictResponseOld).poisson?.home_lambda ?? "—"}
+                </div>
+                <div>
+                  λ Visitante:{" "}
+                  {isNew(data)
+                    ? data.lambda_away.toFixed(2)
+                    : (data as PredictResponseOld).poisson?.away_lambda ?? "—"}
                 </div>
               </div>
+
+              {!isNew(data) && (
+                <>
+                  <div style={statBox}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Corners</div>
+                    <div>
+                      Promedio total:{" "}
+                      {(data as PredictResponseOld).averages.total_corners_avg.toFixed(2)}
+                    </div>
+                    <div>
+                      Predicción MLP:{" "}
+                      {(data as PredictResponseOld).averages.corners_mlp_pred.toFixed(2)}
+                    </div>
+                  </div>
+                  <div style={statBox}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Tarjetas</div>
+                    <div>
+                      Promedio total amarillas:{" "}
+                      {(data as PredictResponseOld).averages.total_yellow_cards_avg.toFixed(
+                        2
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
+
+          {/* NUEVO: Tabla de valor y Análisis IA */}
+          {isNew(data) && <ValueTable rows={data.value_table} />}
+
+          {isNew(data) && data.ai_analysis && (
+            <div style={{ ...panel }}>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>Análisis IA</div>
+              <div
+                style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}
+                // seguridad básica
+                dangerouslySetInnerHTML={{
+                  __html: escapeHtml(data.ai_analysis).replace(/\n/g, "<br/>"),
+                }}
+              />
+            </div>
+          )}
         </>
       )}
 
       <div style={{ marginTop: 28, opacity: 0.6, fontSize: 12 }}>
-        *Modelo: Poisson + BTTS + MLP (corners y O2.5). Uso informativo; no constituye
-        asesoría financiera.
+        *Modelo: Dixon-Coles/Poisson + mezcla de cuotas (opcional) + IA. Uso informativo; no constituye asesoría financiera.
       </div>
     </>
   );
 }
 
-/* ===================== Parlay Builder ===================== */
+/* ===================== Parlay Builder (con soporte dual) ===================== */
 type LegState = {
   league: string;
   teams: string[];
@@ -594,7 +1076,7 @@ type LegState = {
   away: string;
   loading: boolean;
   error: string;
-  result?: PredictResponse;
+  result?: PredictAny;
 };
 
 function ParlayBuilder({
@@ -630,7 +1112,9 @@ function ParlayBuilder({
       return;
     }
     try {
-      const r = await fetch(`${API_BASE}/teams?league=${encodeURIComponent(league)}`);
+      const r = await fetch(
+        `${API_BASE}/teams?league=${encodeURIComponent(league)}`
+      );
       const d: ApiTeams = await r.json();
       setLeg(idx, { teams: d.teams ?? [] });
     } catch {
@@ -656,7 +1140,7 @@ function ParlayBuilder({
         }),
       });
       if (!res.ok) throw new Error(await res.text());
-      const json: PredictResponse = await res.json();
+      const json: PredictAny = await res.json();
       setLeg(idx, { result: json });
     } catch (e: any) {
       setLeg(idx, { error: e?.message || "Error en predicción" });
@@ -665,11 +1149,18 @@ function ParlayBuilder({
     }
   }
 
+  const legProb = (r?: PredictAny) => {
+    if (!r) return undefined;
+    if (isNew(r)) return r.best_pick_prob?.prob ?? undefined; // 0..1
+    const p = (r as PredictResponseOld).best_pick?.prob_pct;
+    return typeof p === "number" ? p / 100 : undefined;
+  };
+
   const combinedProb01 = useMemo(() => {
     const probs = legs
-      .map((l) => l.result?.best_pick?.prob_pct)
+      .map((l) => legProb(l.result))
       .filter((p): p is number => typeof p === "number")
-      .map((p) => clamp01(p / 100));
+      .map((p) => clamp01(p));
     if (probs.length < legsRequired) return 0;
     return probs.reduce((a, b) => a * b, 1);
   }, [legs, legsRequired]);
@@ -677,6 +1168,13 @@ function ParlayBuilder({
   const allReady = legs.every(
     (l) => l.result && !l.loading && !l.error && l.home && l.away
   );
+
+  const labelPick = (r: PredictAny) => {
+    if (isNew(r)) return labelMarket(r.best_pick_prob.market);
+    return `${(r as PredictResponseOld).best_pick.market} — ${
+      (r as PredictResponseOld).best_pick.selection
+    }`;
+    };
 
   return (
     <div>
@@ -699,7 +1197,14 @@ function ParlayBuilder({
                 <div style={{ fontWeight: 800, marginBottom: 8 }}>
                   Leg #{idx + 1}
                 </div>
-                <div className="fm-grid3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+                <div
+                  className="fm-grid3"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr 1fr",
+                    gap: 14,
+                  }}
+                >
                   <div>
                     <div style={label}>Liga</div>
                     <select
@@ -747,7 +1252,15 @@ function ParlayBuilder({
                   </div>
                 </div>
 
-                <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }} className="fm-cta-row">
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "center",
+                  }}
+                  className="fm-cta-row"
+                >
                   <button
                     className="fm-primary-btn"
                     onClick={() => predictLeg(idx)}
@@ -781,15 +1294,29 @@ function ParlayBuilder({
                       Pick recomendado:
                     </div>
                     <div style={{ fontSize: 18, fontWeight: 900 }}>
-                      {L.result.best_pick.market} — {L.result.best_pick.selection}
+                      {labelPick(L.result)}
                     </div>
                     <div>
-                      Prob: <b>{pct(L.result.best_pick.prob_pct)}</b> · Confianza:{" "}
-                      <b>{pct(L.result.best_pick.confidence)}</b>
+                      Prob:{" "}
+                      <b>
+                        {isNew(L.result)
+                          ? toPct(L.result.best_pick_prob.prob)
+                          : pct((L.result as PredictResponseOld).best_pick.prob_pct)}
+                      </b>{" "}
+                      · Confianza:{" "}
+                      <b>
+                        {isNew(L.result)
+                          ? `${L.result.best_pick_prob.confidence}%`
+                          : pct(
+                              (L.result as PredictResponseOld).best_pick.confidence
+                            )}
+                      </b>
                     </div>
-                    <div style={{ marginTop: 8, opacity: 0.8 }}>
-                      {L.result.summary}
-                    </div>
+                    {!isNew(L.result) && (
+                      <div style={{ marginTop: 8, opacity: 0.8 }}>
+                        {(L.result as PredictResponseOld).summary}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -881,4 +1408,18 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+/* ===================== helpers ===================== */
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, (c) => {
+    const m: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return m[c] || c;
+  });
 }

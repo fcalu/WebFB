@@ -1,263 +1,210 @@
-# backend/app.py
 # -*- coding: utf-8 -*-
+import os, json, math, datetime as dt
+from typing import Optional, Dict, Any, List, Tuple
+
+import numpy as np
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Dict, Any, List, Tuple, Optional
 
-import os, joblib
-import pandas as pd
-import numpy as np
-from scipy.stats import poisson
-from math import exp, log, lgamma, factorial
+# === modelos ===
+from models.dixon_coles import fit_dixon_coles, score_matrix
+from models.markets import markets_from_matrix
+from models.market_blend import remove_overround, blend
 
-# -------------------------------------------------------------------
-# CONFIG
-# -------------------------------------------------------------------
-BASE_DIR = os.path.dirname(__file__)
-DATA_DIR = os.path.join(BASE_DIR, "data")
-ART_DIR  = os.path.join(BASE_DIR, "artifacts")
+# ======== Config ========
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+SKIP_TRAIN_ON_STARTUP = os.getenv("SKIP_TRAIN_ON_STARTUP", "1") == "1"
+HALF_LIFE_DAYS = int(os.getenv("DC_HALFLIFE_DAYS", "180"))
+MAX_GOALS = int(os.getenv("DC_MAX_GOALS", "10"))
 
-# === feature flags para volver a lo "normal" ===
-USE_DC = os.getenv("USE_DC", "0") == "1"    # por defecto APAGADO
-USE_MLP = os.getenv("USE_MLP", "0") == "1"  # por defecto APAGADO
-
-# (ya NO entrenamos on-start ni on-demand)
-SKIP_TRAIN_ON_STARTUP = True
-DC_HALFLIFE_DAYS = 180
-DC_MAX_GOALS = 10
-
-LEAGUES_FILES: Dict[str, str] = {
-    "Belgica Pro League":          "Belgica_Pro_League.csv",
-    "Bundesliga":                  "Bundesliga.csv",
-    "Champions League":            "ChampionsLegue.csv",
-    "Allsvenskan (Suecia)":        "datos_Allsvenskan.csv",
-    "Brasileirão":                 "datos_Brasileirao.csv",
-    "Liga Chilena":                "datos_ChileLigue.csv",
-    "Eredivisie":                  "datos_Eredivisie.csv",
-    "Europa League":               "datos_EuropaLeague.csv",
-    "Liga MX":                     "datos_LigaMX.csv",
-    "Liga Portuguesa":             "datos_LigaNos.csv",
-    "Conference League":           "datoss_ConferenceLeague.csv",
-    "EFL League One":              "EFL League One.csv",
-    "JLeague":                     "JLeague.csv",
-    "La Liga España":              "La Liga.csv",
-    "Ligue 1 France":              "LigueOneFrance.csv",
-    "MLS Histórico":               "MLS_Historico.csv",
-    "UEFA Nations League (Europa)":"NationsLegueEUROPA.csv",
-    "Premier League":              "Premier League.csv",
-    "Serie A Italia":              "SerieItalia.csv",
+LEAGUES_FILES = {
+    "Belgica Pro League": "Belgica_Pro_League.csv",
+    "Bundesliga": "Bundesliga.csv",
+    "Champions League": "ChampionsLegue.csv",
+    "Allsvenskan (Suecia)": "datos_Allsvenskan.csv",
+    "Brasileirão": "datos_Brasileirao.csv",
+    "Liga Chilena": "datos_ChileLigue.csv",
+    "Eredivisie": "datos_Eredivisie.csv",
+    "Europa League": "datos_EuropaLeague.csv",
+    "Liga MX": "datos_LigaMX.csv",
+    "Liga Portuguesa": "datos_LigaNos.csv",
+    "Conference League": "datoss_ConferenceLeague.csv",
+    "EFL League One": "EFL League One.csv",
+    "JLeague": "JLeague.csv",
+    "La Liga España": "La Liga.csv",
+    "Ligue 1 France": "LigueOneFrance.csv",
+    "MLS Histórico": "MLS_Historico.csv",
+    "UEFA Nations League (Europa)": "NationsLegueEUROPA.csv",
+    "Premier League": "Premier League.csv",
+    # "Serie A Italia": "SerieItalia.csv",
 }
 
-COL_ALIASES = {
-    "home_team_name": ["home_team_name","home_team","local","home","equipo_local","HomeTeam","homeTeam"],
-    "away_team_name": ["away_team_name","away_team","visitante","away","equipo_visitante","AwayTeam","awayTeam"],
-    "home_team_goal_count": ["home_team_goal_count","home_goals","goles_local","home_score","FTHG","fthg","homeGoals"],
-    "away_team_goal_count": ["away_team_goal_count","away_goals","goles_visitante","away_score","FTAG","ftag","awayGoals"],
-    "home_team_yellow_cards": ["home_team_yellow_cards","local_yellow","home_yellow_cards","amarillas_local","HY","hyc"],
-    "away_team_yellow_cards": ["away_team_yellow_cards","visit_yellow","away_yellow_cards","amarillas_visitante","AY","ayc"],
-    "home_team_corner_count": ["home_team_corner_count","local_corners","home_corners","corners_local","HC","hc"],
-    "away_team_corner_count": ["away_team_corner_count","visit_corners","away_corners","corners_visitante","AC","ac"],
-    "over_25_percentage_pre_match": ["over_25_percentage_pre_match","over25_pre","o25_pre","pct_o25","%o25"],
-    "date": ["date","match_date","utc_date","game_started_at","start_date","fecha","Date"],
-}
+# ======== App ========
+app = FastAPI(title="Footy Predictions API", version="2.1")
 
-# -------------------------------------------------------------------
-# CSV utils
-# -------------------------------------------------------------------
+origins = os.getenv("CORS_ORIGINS", "*")
+allow_origins = ["*"] if origins == "*" else [o.strip() for o in origins.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allow_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ======== Estado ========
+frames: Dict[str, pd.DataFrame] = {}
+teams_cache: Dict[str, List[str]] = {}
+dc_models: Dict[str, Any] = {}
+
+# ======== Utils ========
 def _smart_read_csv(path: str) -> pd.DataFrame:
-    for enc in ("utf-8","latin-1","cp1252"):
-        for sep in (",",";","\t"):
-            try:
-                return pd.read_csv(path, encoding=enc, sep=sep)
-            except Exception:
-                pass
+    for enc in ["utf-8", "latin1", "cp1252"]:
+        try:
+            return pd.read_csv(path, encoding=enc)
+        except Exception:
+            continue
     return pd.read_csv(path)
 
 def _rename_with_aliases(df: pd.DataFrame) -> pd.DataFrame:
-    cols_lower = {c.lower(): c for c in df.columns}
-    ren = {}
-    for target, aliases in COL_ALIASES.items():
-        for a in aliases:
-            if a.lower() in cols_lower:
-                ren[cols_lower[a.lower()]] = target
-                break
-    if ren: df = df.rename(columns=ren)
-
-    for col in ("home_team_yellow_cards","away_team_yellow_cards",
-                "home_team_corner_count","away_team_corner_count"):
-        if col not in df.columns: df[col] = 0
-
+    df = df.rename(columns={c: c.strip() for c in df.columns})
+    mapping = {
+        "home_team": "home_team_name", "away_team": "away_team_name",
+        "HomeTeam": "home_team_name", "AwayTeam": "away_team_name",
+        "home_score": "home_team_goal_count", "away_score": "away_team_goal_count",
+        "FTHG": "home_team_goal_count", "FTAG": "away_team_goal_count",
+        "home_goals": "home_team_goal_count", "away_goals": "away_team_goal_count",
+        "match_date": "date", "Date": "date", "fecha": "date", "utc_date": "date",
+        "game_started_at": "date", "start_date": "date",
+    }
+    for k, v in mapping.items():
+        if k in df.columns and v not in df.columns:
+            df[v] = df[k]
     if "date" not in df.columns:
         df["date"] = pd.date_range("2018-01-01", periods=len(df), freq="D")
     else:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        if df["date"].isna().all():
-            df["date"] = pd.date_range("2018-01-01", periods=len(df), freq="D")
-        else:
-            df["date"] = df["date"].ffill().bfill()
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").fillna(method="ffill")
+    req = ["home_team_name", "away_team_name", "home_team_goal_count", "away_team_goal_count"]
+    for r in req:
+        if r not in df.columns:
+            raise ValueError(f"Columna requerida no encontrada: {r}")
+    return df[["date", "home_team_name", "away_team_name",
+               "home_team_goal_count", "away_team_goal_count"]].copy()
 
-    if "over_25_percentage_pre_match" not in df.columns:
-        rate = ((pd.to_numeric(df["home_team_goal_count"], errors="coerce").fillna(0) +
-                 pd.to_numeric(df["away_team_goal_count"], errors="coerce").fillna(0)) > 2.5).mean()
-        df["over_25_percentage_pre_match"] = round(float(rate)*100.0, 2)
-
-    return df
-
-def _augment_df(df: pd.DataFrame) -> pd.DataFrame:
-    req = ["home_team_name","away_team_name","home_team_goal_count","away_team_goal_count","date"]
-    for c in req:
-        if c not in df.columns:
-            raise ValueError(f"Falta la columna obligatoria '{c}'")
-
-    df = df.copy()
-    for c in ["home_team_goal_count","away_team_goal_count",
-              "home_team_yellow_cards","away_team_yellow_cards",
-              "home_team_corner_count","away_team_corner_count",
-              "over_25_percentage_pre_match"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-
-    df["home_team_goals_avg"] = df.groupby("home_team_name")["home_team_goal_count"].transform("mean")
-    df["away_team_goals_avg"] = df.groupby("away_team_name")["away_team_goal_count"].transform("mean")
-    df["home_team_goals_conceded_avg"] = df.groupby("home_team_name")["away_team_goal_count"].transform("mean")
-    df["away_team_goals_conceded_avg"] = df.groupby("away_team_name")["home_team_goal_count"].transform("mean")
-    df["home_team_yellow_cards_avg"] = df.groupby("home_team_name")["home_team_yellow_cards"].transform("mean")
-    df["away_team_yellow_cards_avg"] = df.groupby("away_team_name")["away_team_yellow_cards"].transform("mean")
-    df["home_team_corner_count_avg"] = df.groupby("home_team_name")["home_team_corner_count"].transform("mean")
-    df["away_team_corner_count_avg"] = df.groupby("away_team_name")["away_team_corner_count"].transform("mean")
-
-    df["over_2_5_goals"] = ((df["home_team_goal_count"] + df["away_team_goal_count"]) > 2.5).astype(int)
-    df["total_corners"] = df["home_team_corner_count"] + df["away_team_corner_count"]
-    return df
-
-# -------------------------------------------------------------------
-# Poisson & DC helpers
-# -------------------------------------------------------------------
-def _poisson_1x2(hλ: float, aλ: float, max_goals: int = 7) -> Tuple[float,float,float]:
-    hg = poisson.pmf(np.arange(0, max_goals+1), hλ)
-    ag = poisson.pmf(np.arange(0, max_goals+1), aλ)
-    mat = np.outer(hg, ag)
-    return float(np.tril(mat, -1).sum()), float(np.trace(mat)), float(np.triu(mat, 1).sum())
-
-def _poisson_matrix(hλ: float, aλ: float, max_goals: int = 7) -> np.ndarray:
-    hg = poisson.pmf(np.arange(0, max_goals + 1), hλ)
-    ag = poisson.pmf(np.arange(0, max_goals + 1), aλ)
-    return np.outer(hg, ag)
-
-def _scoreline_matrix(hλ: float, aλ: float, max_goals: int = 5) -> Dict[str, Any]:
-    hg = poisson.pmf(np.arange(0, max_goals+1), hλ)
-    ag = poisson.pmf(np.arange(0, max_goals+1), aλ)
-    mat = np.outer(hg, ag)
-    items = []
-    for i in range(0, max_goals+1):
-        for j in range(0, max_goals+1):
-            items.append((f"{i}-{j}", float(mat[i,j])))
-    items.sort(key=lambda x: x[1], reverse=True)
-    top = [{"score": s, "pct": round(100.0*p, 2)} for s,p in items[:8]]
-    return {
-        "home_lambda": round(float(hλ), 4),
-        "away_lambda": round(float(aλ), 4),
-        "rows": [str(i) for i in range(0, max_goals+1)],
-        "cols": [str(j) for j in range(0, max_goals+1)],
-        "matrix": [[round(float(x)*100.0, 2) for x in row] for row in mat.tolist()],
-        "top_scorelines": top,
-    }
-
-def _dc_correction(i: int, j: int, lam_h: float, lam_a: float, rho: float) -> float:
-    if i == 0 and j == 0: return 1 - lam_h*lam_a*rho
-    if i == 0 and j == 1: return 1 + lam_h*rho
-    if i == 1 and j == 0: return 1 + lam_a*rho
-    if i == 1 and j == 1: return 1 - rho
-    return 1.0
-
-def _dc_score_matrix(model: Dict[str, Any], home_team: str, away_team: str):
-    teams = model["teams"]; att = model["attack"]; deff = model["defence"]
-    home = model["home_adv"]; rho = model["rho"]; G = model["max_goals"]
-    t_idx = {t:i for i,t in enumerate(teams)}
-    ih, ia = t_idx[home_team], t_idx[away_team]
-    lam_h = exp(home + att[ih] - deff[ia])
-    lam_a = exp(att[ia] - deff[ih])
-
-    P = np.zeros((G+1, G+1))
-    for i in range(G+1):
-        for j in range(G+1):
-            base = (np.exp(-lam_h) * lam_h**i / factorial(i)) * (np.exp(-lam_a) * lam_a**j / factorial(j))
-            P[i, j] = base * _dc_correction(i, j, lam_h, lam_a, rho)
-    P /= P.sum()
-    return P, lam_h, lam_a
-
-def _pct(x: float) -> float:
-    return round(100.0*float(x), 2)
-
-# -------------------------------------------------------------------
-# Carga de datos + artifacts
-# -------------------------------------------------------------------
-frames: Dict[str, pd.DataFrame] = {}
-teams_cache: Dict[str, List[str]] = {}
-mlp_models: Dict[str, Dict[str, Any]] = {}   # scaler, o25_model, corners_model
-dc_models:  Dict[str, Dict[str, Any]] = {}   # dict retornado por train_cache
-
-def _slug(name: str) -> str:
-    keep = "".join(ch if ch.isalnum() else "_" for ch in name)
-    while "__" in keep: keep = keep.replace("__","_")
-    return keep.strip("_").lower()
-
-def _load_frames() -> None:
+def _load_all(build_models: bool = True) -> None:
     frames.clear(); teams_cache.clear()
+    if build_models: dc_models.clear()
     for pretty, fname in LEAGUES_FILES.items():
         path = os.path.join(DATA_DIR, fname)
         if not os.path.exists(path):
             print(f"[SKIP] No encontrado: {path}"); continue
         try:
             raw = _smart_read_csv(path)
-            raw = _rename_with_aliases(raw)
-            df  = _augment_df(raw)
+            df = _rename_with_aliases(raw)
             frames[pretty] = df
             teams_cache[pretty] = sorted(set(df["home_team_name"]).union(df["away_team_name"]))
-            print(f"[OK] {pretty}: {len(df)} filas, {len(teams_cache[pretty])} equipos")
+            if build_models:
+                try:
+                    dc_models[pretty] = fit_dixon_coles(df, HALF_LIFE_DAYS, MAX_GOALS)
+                    print(f"[OK] {pretty}: {len(df)} filas, {len(teams_cache[pretty])} equipos")
+                except Exception as me:
+                    print(f"[WARN] Modelo DC falló para {pretty}: {me}")
+            else:
+                print(f"[OK] {pretty}: {len(df)} filas, {len(teams_cache[pretty])} equipos (sin entrenar)")
         except Exception as e:
             print(f"[ERROR] Cargando {pretty}: {e}")
 
-def _load_artifacts() -> None:
-    mlp_models.clear(); dc_models.clear()
-    for league in LEAGUES_FILES.keys():
-        slug = _slug(league)
-        p_mlp = os.path.join(ART_DIR, f"mlp_{slug}.joblib")
-        p_dc  = os.path.join(ART_DIR, f"dc_{slug}.joblib")
-        if os.path.exists(p_mlp):
-            try:
-                mlp_models[league] = joblib.load(p_mlp); print(f"[ART] MLP {league}")
-            except Exception as e:
-                print(f"[ART] err MLP {league}: {e}")
-        if os.path.exists(p_dc):
-            try:
-                dc_models[league] = joblib.load(p_dc);  print(f"[ART] DC  {league}")
-            except Exception as e:
-                print(f"[ART] err DC  {league}: {e}")
+def _ensure_dc_model(league: str):
+    if league in dc_models: return dc_models[league]
+    if league not in frames: raise HTTPException(400, f"Liga no cargada: {league}")
+    print(f"[INFO] Entrenando DC on-demand para {league}…")
+    dc_models[league] = fit_dixon_coles(frames[league], HALF_LIFE_DAYS, MAX_GOALS)
+    return dc_models[league]
 
-# -------------------------------------------------------------------
-# API
-# -------------------------------------------------------------------
-class PredictPayload(BaseModel):
+def _best_pick_by_prob(mk: Dict[str,float], lam_h: float, lam_a: float) -> Dict[str,Any]:
+    candidates = [
+        ("1_&_U3_5", mk.get("1_&_U3_5",0)),
+        ("2_&_U3_5", mk.get("2_&_U3_5",0)),
+        ("BTTS", mk.get("BTTS",0)),
+        ("O2_5", mk.get("O2_5",0)),
+        ("1X", mk.get("1X",0)),
+        ("X2", mk.get("X2",0)),
+        ("1", mk.get("1",0)),
+        ("2", mk.get("2",0)),
+        ("U2_5", mk.get("U2_5",0)),
+    ]
+    market, prob = max(candidates, key=lambda x: x[1])
+    conf = int(100 * min(0.95, max(0.0, abs(prob - 0.5) * 2)))
+    why = [
+        f"λ local {lam_h:.2f} vs λ visitante {lam_a:.2f} → tendencia de goles "
+        f"{'alta' if lam_h+lam_a>2.6 else 'media' if lam_h+lam_a>2.2 else 'baja'}.",
+        f"1X2: 1={mk.get('1',0)*100:.2f}% • X={mk.get('X',0)*100:.2f}% • 2={mk.get('2',0)*100:.2f}%.",
+        f"O2.5={mk.get('O2_5',0)*100:.2f}% • U3.5={mk.get('U3_5',0)*100:.2f}% • BTTS={mk.get('BTTS',0)*100:.2f}%.",
+    ]
+    return {"market": market, "prob": prob, "confidence": conf, "why": why}
+
+def _ev(odd: float, p: float) -> float:
+    # EV para stake 1 con cuota decimal
+    return p*odd - 1.0
+
+def _kelly(odd: float, p: float) -> float:
+    b = max(odd - 1.0, 1e-9); q = 1.0 - p
+    f = ((b*p) - q) / b
+    return max(0.0, float(f))
+
+def _value_table(mk: Dict[str,float], odds: Dict[str,float]) -> List[Dict[str,Any]]:
+    rows = []
+    for k, odd in odds.items():
+        if k not in mk: continue
+        p = float(mk[k])
+        fair = float(1.0/max(p,1e-9))
+        ev = _ev(odd, p)
+        kelly = _kelly(odd, p)
+        rows.append({
+            "market": k,
+            "prob_model": p,
+            "fair_odds": fair,
+            "odd": odd,
+            "edge_pct": (p - 1.0/odd)*100.0,
+            "ev": ev,
+            "kelly_frac": kelly
+        })
+    rows.sort(key=lambda r: r["ev"], reverse=True)
+    return rows
+
+def _hours_to_kickoff(kickoff_utc: Optional[str]) -> Optional[float]:
+    if not kickoff_utc: return None
+    try:
+        ko = dt.datetime.fromisoformat(kickoff_utc.replace("Z","+00:00")).astimezone(dt.timezone.utc)
+        now = dt.datetime.now(dt.timezone.utc)
+        return round((ko - now).total_seconds() / 3600.0, 2)
+    except Exception:
+        return None
+
+# ======== Modelos de request ========
+class PredictBody(BaseModel):
     league: str
     home_team: str
     away_team: str
-    engine: Optional[str] = Field("poisson", description="poisson | dc")
+    kickoff_utc: Optional[str] = Field(None, description="ISO 8601 UTC, ej. 2025-05-20T19:00:00Z")
+    # Cuotas opcionales (decimales). Puedes enviar cualquier subset.
+    odds: Optional[Dict[str, float]] = Field(
+        default=None,
+        description="Ej: {'1':2.15,'X':3.3,'2':3.5,'O2_5':1.95,'U2_5':1.85,'BTTS':1.85,'NOBTTS':2.05,'U3_5':1.45,'O3_5':2.7}"
+    )
+    blend_with_market: bool = Field(default=True, description="Mezclar modelo con mercado en log-odds")
+    with_ai: bool = Field(default=False, description="Incluir análisis IA (requiere OPENAI_API_KEY)")
+    ai_model: str = Field(default="gpt-4o-mini", description="Modelo OpenAI (ej. gpt-4o-mini)")
+    ai_lang: str = Field(default="es", description="Idioma del análisis IA")
 
-app = FastAPI(title="Footy Predictions API", version="2.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
-)
-
+# ======== Endpoints ========
 @app.on_event("startup")
 def _startup():
-    _load_frames()
-    _load_artifacts()
-    print(f"[BOOT] ligas={len(frames)} mlp={len(mlp_models)} dc={len(dc_models)}")
-    
+    _load_all(build_models=not SKIP_TRAIN_ON_STARTUP)
+
 @app.get("/")
 def root():
     return {"ok": True, "service": "Footy Predictions API", "docs": "/docs", "health": "/health"}
@@ -267,166 +214,190 @@ def health():
     return {
         "ok": True,
         "leagues_loaded": list(frames.keys()),
-        "mlp_models_loaded": list(mlp_models.keys()),
-        "dc_models_loaded": list(dc_models.keys()),
-        "artifacts_dir_exists": os.path.isdir(ART_DIR),
+        "dc_models_ready": list(dc_models.keys()),
+        "skip_train_on_startup": SKIP_TRAIN_ON_STARTUP,
+        "half_life_days": HALF_LIFE_DAYS,
     }
 
 @app.get("/leagues")
-def get_leagues():
+def leagues():
     return {"leagues": list(frames.keys())}
 
 @app.get("/teams")
-def get_teams(league: str):
-    if league not in teams_cache:
-        raise HTTPException(status_code=404, detail=f"Liga '{league}' no cargada.")
-    return {"teams": teams_cache[league]}
+def teams(league: str):
+    if league not in teams_cache: raise HTTPException(400, f"Liga no encontrada: {league}")
+    return {"league": league, "teams": teams_cache[league]}
+
+@app.get("/refresh")
+def refresh():
+    _load_all(build_models=False)
+    return {"ok": True, "refreshed": list(frames.keys())}
+
+@app.post("/warmup")
+def warmup():
+    built = []
+    for lg in frames.keys():
+        if lg in dc_models: continue
+        try:
+            dc_models[lg] = fit_dixon_coles(frames[lg], HALF_LIFE_DAYS, MAX_GOALS)
+            built.append(lg)
+        except Exception as e:
+            print(f"[WARMUP] fallo {lg}: {e}")
+    return {"built": built, "total": len(built)}
+
+def _blend_with_odds(mk: Dict[str,float], odds: Dict[str,float]) -> Tuple[Dict[str,float], Dict[str, Dict[str,float]]]:
+    detail = {}
+    if not odds: return mk, detail
+
+    # 1X2
+    trio = {k:odds[k] for k in ["1","X","2"] if k in odds}
+    if len(trio) >= 2:  # si hay al menos 2, normalizamos igualmente
+        imp = remove_overround(trio)
+        for k in ["1","X","2"]:
+            if k in imp:
+                detail[k] = {"model": mk.get(k,0.0), "market": imp[k]}
+                mk[k] = blend(mk.get(k,0.0), imp[k], w=0.6)
+
+    # Pares: O/U 2.5
+    pair = {k:odds[k] for k in ["O2_5","U2_5"] if k in odds}
+    if len(pair) >= 2:
+        imp = remove_overround(pair)
+        for k in ["O2_5","U2_5"]:
+            if k in imp:
+                detail[k] = {"model": mk.get(k,0.0), "market": imp[k]}
+                mk[k] = blend(mk.get(k,0.0), imp[k], w=0.6)
+
+    # BTTS Sí/No
+    pair = {k:odds[k] for k in ["BTTS","NOBTTS"] if k in odds}
+    if len(pair) >= 2:
+        imp = remove_overround(pair)
+        if "BTTS" in imp:
+            detail["BTTS"] = {"model": mk.get("BTTS",0.0), "market": imp["BTTS"]}
+            mk["BTTS"] = blend(mk.get("BTTS",0.0), imp["BTTS"], w=0.6)
+
+    # O/U 3.5 (si lo envían)
+    pair = {k:odds[k] for k in ["O3_5","U3_5"] if k in odds}
+    if len(pair) >= 2:
+        imp = remove_overround(pair)
+        for k in ["O3_5","U3_5"]:
+            if k in imp:
+                # si no tenemos O3_5 del modelo, aproximamos desde matriz total (mk["O3_5"] ya existe)
+                detail[k] = {"model": mk.get(k,0.0), "market": imp[k]}
+                mk[k] = blend(mk.get(k,0.0), imp[k], w=0.6)
+
+    return mk, detail
+
+def _ai_analysis(payload: Dict[str,Any], model_name: str, lang: str) -> str:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return "IA deshabilitada: falta OPENAI_API_KEY."
+    try:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            # nuevo SDK
+            messages = [
+                {"role":"system","content":(
+                    "Eres un analista profesional de apuestas deportivas. "
+                    "Hablas en español claro, sintetizas en 6-10 viñetas. "
+                    "Evita lenguaje de venta y recuerda que son probabilidades, no garantías. "
+                    "Cita cifras clave (probabilidades %, λ, EV/edge) y su interpretación. "
+                    "Si las cuotas son tempranas o faltan, advierte la incertidumbre. "
+                    "Termina con 1-3 picks con justificación y riesgos.")},
+                {"role":"user","content": json.dumps(payload, ensure_ascii=False)}
+            ]
+            resp = client.chat.completions.create(
+                model=model_name,
+                temperature=0.25,
+                max_tokens=800,
+                messages=messages,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception:
+            import openai as openai_legacy
+            openai_legacy.api_key = api_key
+            resp = openai_legacy.ChatCompletion.create(
+                model=model_name,
+                temperature=0.25,
+                max_tokens=800,
+                messages=[
+                    {"role":"system","content":"Eres un analista profesional de apuestas deportivas en español."},
+                    {"role":"user","content": json.dumps(payload, ensure_ascii=False)}
+                ]
+            )
+            return resp.choices[0].message["content"].strip()
+    except Exception as e:
+        return f"IA no disponible: {e}"
 
 @app.post("/predict")
-def predict(payload: PredictPayload):
-    league = payload.league
-    if league not in frames:
-        raise HTTPException(status_code=404, detail=f"Liga '{league}' no cargada.")
+def predict(body: PredictBody):
+    league = body.league
+    if league not in frames: raise HTTPException(400, f"Liga no cargada: {league}")
     df = frames[league]
 
-    hs = df[df["home_team_name"] == payload.home_team]
-    as_ = df[df["away_team_name"] == payload.away_team]
-    if hs.empty or as_.empty:
-        raise HTTPException(status_code=404, detail="Equipo(s) no encontrados en esta liga.")
+    pool = set(df["home_team_name"]).union(df["away_team_name"])
+    if body.home_team not in pool: raise HTTPException(400, f"Local no encontrado en {league}")
+    if body.away_team not in pool: raise HTTPException(400, f"Visitante no encontrado en {league}")
 
-    hs0 = hs.iloc[0]; as0 = as_.iloc[0]
-    hλ = float(hs0["home_team_goals_avg"])
-    aλ = float(as0["away_team_goals_avg"])
+    model = _ensure_dc_model(league)
+    P, lam_h, lam_a = score_matrix(model, body.home_team, body.away_team)
+    mk = markets_from_matrix(P)  # probabilidades del modelo
 
-    engine = (payload.engine or "poisson").lower()
-    if engine == "dc" and league in dc_models:
-        P, lam_h, lam_a = _dc_score_matrix(dc_models[league], payload.home_team, payload.away_team)
-        i = np.arange(P.shape[0])[:,None]; j = np.arange(P.shape[1])[None,:]
-        p_home = float(P[i>j].sum()); p_draw = float(P[i==j].sum()); p_away = float(P[i<j].sum())
-        mat = P; hλ_eff, aλ_eff = lam_h, lam_a
-        poisson_payload = _scoreline_matrix(hλ_eff, aλ_eff)
-        engine_used = "dc"
-    else:
-        p_home, p_draw, p_away = _poisson_1x2(hλ, aλ)
-        mat = _poisson_matrix(hλ, aλ, max_goals=7)
-        hλ_eff, aλ_eff = hλ, aλ
-        poisson_payload = _scoreline_matrix(hλ_eff, aλ_eff)
-        engine_used = "poisson"
+    # Mezcla con mercado si mandan cuotas
+    blend_detail = {}
+    if body.odds and body.blend_with_market:
+        mk, blend_detail = _blend_with_odds(mk, body.odds)
 
-    # Probabilidades derivadas de la matriz
-    def prob_under(k: int) -> float:
-        return float(sum(mat[i, j] for i in range(mat.shape[0]) for j in range(mat.shape[1]) if i + j <= k))
-    def prob_over(k: int) -> float:
-        return float(1.0 - prob_under(k))
-    p_o25 = prob_over(2)
-    p_btts = float(mat[1:, 1:].sum())
+    # Tabla de valor (EV/Kelly) si mandan cuotas
+    value_table = _value_table(mk, body.odds) if body.odds else []
 
-    # Promedios
-    total_yc = float(hs0["home_team_yellow_cards_avg"] + as0["away_team_yellow_cards_avg"])
-    total_corners_avg = float(hs0["home_team_corner_count_avg"] + as0["away_team_corner_count_avg"])
+    best_prob = _best_pick_by_prob(mk, lam_h, lam_a)
+    best_value = value_table[0] if value_table and value_table[0]["ev"] > 0 else None
 
-    # MLP pre-entrenado
-    if league in mlp_models:
-        mp = mlp_models[league]
-        X = np.array([[hλ, aλ, float(hs0["home_team_corner_count_avg"]), float(as0["away_team_corner_count_avg"])]], dtype=float)
-        Xs = mp["scaler"].transform(X)
-        o25_prob_mlp = float(mp["o25_model"].predict_proba(Xs)[0,1])
-        corners_pred  = float(mp["corners_model"].predict(Xs)[0])
-    else:
-        over25_hist_share = float(df["over_25_percentage_pre_match"].mean()) / 100.0
-        o25_prob_mlp = (p_o25 + over25_hist_share) / 2.0
-        corners_pred  = total_corners_avg
+    # Top marcadores para la UI
+    flat = []
+    for i in range(P.shape[0]):
+        for j in range(P.shape[1]):
+            flat.append((i, j, float(P[i, j])))
+    top_scores = sorted(flat, key=lambda x: x[2], reverse=True)[:10]
 
-    # Mejor jugada
-    def _best_pick(home: str, away: str, hλ: float, aλ: float,
-                   p_home: float, p_draw: float, p_away: float,
-                   p_o25: float, p_btts: float,
-                   mat: np.ndarray, poisson_payload: Dict[str, Any]) -> Dict[str, Any]:
-        def prob_under(k: int) -> float:
-            return float(sum(mat[i, j] for i in range(mat.shape[0]) for j in range(mat.shape[1]) if i + j <= k))
-        def prob_over(k: int) -> float:
-            return float(1.0 - prob_under(k))
-        p_U35, p_O15, p_O25 = prob_under(3), prob_over(1), prob_over(2)
-        p_btts_yes = float(mat[1:, 1:].sum())
-        p_1x = float(np.tril(mat, 0).sum()); p_12 = float(1.0 - np.trace(mat)); p_x2 = float(np.triu(mat, 0).sum())
-        def sum_mask(pred) -> float:
-            return float(sum(mat[i, j] for i in range(mat.shape[0]) for j in range(mat.shape[1]) if pred(i, j)))
-        p_1_U35  = sum_mask(lambda i, j: i > j and (i + j) <= 3)
-        p_2_U35  = sum_mask(lambda i, j: j > i and (i + j) <= 3)
-        p_1_O15  = sum_mask(lambda i, j: i > j and (i + j) >= 2)
-        p_2_O15  = sum_mask(lambda i, j: j > i and (i + j) >= 2)
-        p_1x_U35 = sum_mask(lambda i, j: i >= j and (i + j) <= 3)
-        p_x2_U35 = sum_mask(lambda i, j: j >= i and (i + j) <= 3)
-        p_12_O15 = sum_mask(lambda i, j: i != j and (i + j) >= 2)
-        p_btts_o25 = sum_mask(lambda i, j: i > 0 and j > 0 and (i + j) >= 3)
-        p_nbtts_u35 = sum_mask(lambda i, j: (i == 0 or j == 0) and (i + j) <= 3)
-        candidates = [
-          {"prio":4,"market":"1X2","selection":f"1 ({home})","prob":p_home},
-          {"prio":4,"market":"1X2","selection":"X","prob":p_draw},
-          {"prio":4,"market":"1X2","selection":f"2 ({away})","prob":p_away},
-          {"prio":2,"market":"Doble oportunidad","selection":"1X","prob":p_1x},
-          {"prio":2,"market":"Doble oportunidad","selection":"12","prob":p_12},
-          {"prio":2,"market":"Doble oportunidad","selection":"X2","prob":p_x2},
-          {"prio":3,"market":"Goles","selection":"Under 3.5","prob":p_U35},
-          {"prio":3,"market":"Goles","selection":"Over 1.5","prob":p_O15},
-          {"prio":3,"market":"Goles","selection":"Over 2.5","prob":p_O25},
-          {"prio":1,"market":"Combo","selection":"1 & Under 3.5","prob":p_1_U35},
-          {"prio":1,"market":"Combo","selection":"2 & Under 3.5","prob":p_2_U35},
-          {"prio":1,"market":"Combo","selection":"1 & Over 1.5","prob":p_1_O15},
-          {"prio":1,"market":"Combo","selection":"2 & Over 1.5","prob":p_2_O15},
-          {"prio":1,"market":"Combo","selection":"1X & Under 3.5","prob":p_1x_U35},
-          {"prio":1,"market":"Combo","selection":"X2 & Under 3.5","prob":p_x2_U35},
-          {"prio":1,"market":"Combo","selection":"12 & Over 1.5","prob":p_12_O15},
-          {"prio":1,"market":"Combo","selection":"BTTS Sí & Over 2.5","prob":p_btts_o25},
-          {"prio":1,"market":"Combo","selection":"BTTS No & Under 3.5","prob":p_nbtts_u35},
-        ]
-        def passes(c):
-            if c["market"] == "1X2": return c["prob"] >= 0.55
-            if c["market"] == "Doble oportunidad": return c["prob"] >= 0.65
-            if c["market"] == "Goles": return 0.55 <= c["prob"] <= 0.88
-            if c["market"] == "Combo": return c["prob"] >= 0.50
-            return True
-        filtered = [c for c in candidates if passes(c)]
-        pool = filtered if filtered else candidates
-        pool.sort(key=lambda x:(x["prio"], -x["prob"]))
-        best = pool[0]; best["prob_pct"]=round(best["prob"]*100,2); best["confidence"]=best["prob_pct"]
-        top = poisson_payload.get("top_scorelines", [])
-        top_txt = ", ".join([f"{t['score']} ({t['pct']}%)" for t in top[:3]]) if top else "s/datos"
-        goals_skew = "alta" if (hλ + aλ) >= 2.7 else ("media" if (hλ + aλ) >= 2.2 else "baja")
-        reasons = [
-            f"λ local {hλ:.2f} vs λ visitante {aλ:.2f} → tendencia de goles {goals_skew}.",
-            f"1X2: 1={round(p_home*100,2)}% · X={round(p_draw*100,2)}% · 2={round(p_away*100,2)}%.",
-            f"U3.5={round(prob_under(3)*100,2)}% · O1.5={round(prob_over(1)*100,2)}% · O2.5={round(prob_over(2)*100,2)}% · AA={round(p_btts_yes*100,2)}%.",
-            f"Marcadores más probables: {top_txt}.",
-        ]
-        summary = f"Partido {'local' if p_home>p_away else 'visitante' if p_away>p_home else 'parejo'}; " \
-                  f"{home} λ={hλ:.2f} / {away} λ={aλ:.2f}. Mejor jugada: {best['market']} – {best['selection']} ({best['prob_pct']}%)."
-        return {"market":best["market"],"selection":best["selection"],"prob_pct":best["prob_pct"],
-                "confidence":best["confidence"],"reasons":reasons,"summary":summary}
+    hours_left = _hours_to_kickoff(body.kickoff_utc)
+    legend = "Sugerencia: ingresa las cuotas ~5 horas antes del partido para un cálculo más preciso."
+    if hours_left is not None:
+        legend += f" Faltan {hours_left} h para el inicio."
 
-    best_pick = _best_pick(payload.home_team, payload.away_team,
-                           hλ_eff, aλ_eff, p_home, p_draw, p_away, p_o25, p_btts,
-                           mat, poisson_payload)
+    # IA (opcional)
+    ai_text = None
+    if body.with_ai:
+        ai_payload = {
+            "partido": {
+                "liga": league,
+                "local": body.home_team,
+                "visitante": body.away_team,
+                "kickoff_utc": body.kickoff_utc,
+            },
+            "lambda": {"local": round(lam_h,2), "visitante": round(lam_a,2)},
+            "mercados": {k: round(v,4) for k,v in mk.items()},
+            "mejor_por_prob": best_prob,
+            "cuotas": body.odds or {},
+            "value_table_top": value_table[:5],
+            "nota": "No es asesoría financiera; usa stake responsable."
+        }
+        ai_text = _ai_analysis(ai_payload, body.ai_model, body.ai_lang)
 
     return {
-        "engine": engine_used,
         "league": league,
-        "home_team": payload.home_team,
-        "away_team": payload.away_team,
-        "probs": {
-            "home_win_pct": _pct(p_home),
-            "draw_pct": _pct(p_draw),
-            "away_win_pct": _pct(p_away),
-            "over_2_5_pct": _pct(p_o25),
-            "btts_pct": _pct(p_btts),
-            "o25_mlp_pct": _pct(o25_prob_mlp),
-        },
-        "poisson": poisson_payload,
-        "averages": {
-            "total_yellow_cards_avg": round(float(hs0['home_team_yellow_cards_avg'] + as0['away_team_yellow_cards_avg']), 2),
-            "total_corners_avg": round(float(hs0['home_team_corner_count_avg'] + as0['away_team_corner_count_avg']), 2),
-            "corners_mlp_pred": round(float(corners_pred), 2),
-        },
-        "best_pick": best_pick,
-        "summary": best_pick["summary"],
+        "home_team": body.home_team,
+        "away_team": body.away_team,
+        "lambda_home": lam_h,
+        "lambda_away": lam_a,
+        "markets": mk,
+        "best_pick_prob": best_prob,
+        "best_value_pick": best_value,
+        "value_table": value_table[:12],
+        "top_scores": [{"home": i, "away": j, "p": p} for i,j,p in top_scores],
+        "blend_detail": blend_detail or None,
+        "legend": legend,
+        "ai_analysis": ai_text,
+        "note": "Modelo Dixon-Coles + recencia; probabilidades, no garantías."
     }
