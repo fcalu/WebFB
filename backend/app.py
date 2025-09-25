@@ -330,14 +330,14 @@ def predict(inp: PredictIn):
     pxb = blend(px, market_1x2["X"] if market_1x2 else None)
     p2b = blend(p2, market_1x2["2"] if market_1x2 else None)
     po25b = blend(po25, market_o25)
-
+    over25_pct = round(po25b * 100, 2)  # <- calculo una vez
     probs_out = {
         "home_win_pct": round(p1b * 100, 2),
         "draw_pct": round(pxb * 100, 2),
         "away_win_pct": round(p2b * 100, 2),
         "over_2_5_pct": round(po25b * 100, 2),
         "btts_pct": round(pbtts * 100, 2),  # BTTS no se mezcla (pocas casas lo dan junto)
-        "o25_mlp_pct": None,  # placeholder para compatibilidad front
+        "o25_mlp_pct": over25_pct,  # placeholder para compatibilidad front
     }
 
     # Estadísticos extra
