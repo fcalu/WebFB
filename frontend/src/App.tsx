@@ -197,7 +197,7 @@ function Header({
         marginBottom: 14,
       }}
     >
-      <InstallPWAButton style={actionBtn(true)} />
+      
       <div
         className="fm-brand"
         style={{ display: "flex", alignItems: "center", gap: 14 }}
