@@ -1,6 +1,5 @@
 // src/App.tsx
 import { useEffect, useMemo, useState } from "react";
-import InstallPWAButton from "./components/InstallPWAButton";
 
 /* ===================== Types ===================== */
 type ApiLeagues = { leagues: string[] };
@@ -197,7 +196,6 @@ function Header({
         marginBottom: 14,
       }}
     >
-      
       <div
         className="fm-brand"
         style={{ display: "flex", alignItems: "center", gap: 14 }}
