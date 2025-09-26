@@ -53,6 +53,7 @@ const pct = (n?: number) =>
   n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`;
 const fmt2 = (n?: number) =>
   n == null || Number.isNaN(n) ? "—" : (+n).toFixed(2);
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
 const toFloat = (v: any) => {
   if (v === undefined || v === null || v === "") return undefined;
@@ -216,7 +217,7 @@ function Header({
   );
 }
 
-/* ===================== Odds Editor ===================== */
+/* ===================== Odds Editor (ahora acepta punto) ===================== */
 type Odds = {
   "1"?: number;
   X?: number;
@@ -224,19 +225,66 @@ type Odds = {
   O2_5?: number;
   BTTS_YES?: number;
 };
+type RawOdds = {
+  "1"?: string;
+  X?: string;
+  "2"?: string;
+  O2_5?: string;
+  BTTS_YES?: string;
+};
 
 function OddsEditor({
   odds,
   setOdds,
+  rawOdds,
+  setRawOdds,
 }: {
   odds: Odds;
   setOdds: (o: Odds) => void;
+  rawOdds: RawOdds;
+  setRawOdds: (r: RawOdds) => void;
 }) {
-  const setField = (k: keyof Odds, v: string) =>
-    setOdds({ ...odds, [k]: toFloat(v) });
+  const setField = (k: keyof Odds, txt: string) => {
+    // Mantenemos el texto mientras escribes...
+    setRawOdds({ ...rawOdds, [k]: txt });
+  };
+  const commitField = (k: keyof Odds, txt: string) => {
+    // ...y recién al salir del input parseamos a número.
+    const num = toFloat(txt);
+    setOdds({ ...odds, [k]: num });
+    if (num === undefined) {
+      // si no parsea, dejamos el texto tal cual para que el usuario lo corrija
+      return;
+    }
+    // normalizamos la visual a 2 decimales
+    setRawOdds({ ...rawOdds, [k]: String(num) });
+  };
 
   const anyOdds =
     odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES;
+
+  const Field = ({
+    k,
+    labelText,
+    ph,
+  }: {
+    k: keyof Odds;
+    labelText: string;
+    ph: string;
+  }) => (
+    <div>
+      <div style={label}>{labelText}</div>
+      <input
+        type="text"
+        inputMode="decimal"
+        placeholder={ph}
+        style={input}
+        value={rawOdds[k] ?? ""}
+        onChange={(e) => setField(k, e.target.value)}
+        onBlur={(e) => commitField(k, e.target.value)}
+      />
+    </div>
+  );
 
   return (
     <div style={{ ...panel, marginTop: 10 }}>
@@ -255,62 +303,20 @@ function OddsEditor({
           gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))",
         }}
       >
-        <div>
-          <div style={label}>1 (Local)</div>
-          <input
-            placeholder="e.g. 2.10"
-            style={input}
-            value={odds["1"] ?? ""}
-            onChange={(e) => setField("1", e.target.value)}
-            inputMode="decimal"
-          />
-        </div>
-        <div>
-          <div style={label}>X (Empate)</div>
-          <input
-            placeholder="e.g. 3.30"
-            style={input}
-            value={odds.X ?? ""}
-            onChange={(e) => setField("X", e.target.value)}
-            inputMode="decimal"
-          />
-        </div>
-        <div>
-          <div style={label}>2 (Visitante)</div>
-          <input
-            placeholder="e.g. 3.40"
-            style={input}
-            value={odds["2"] ?? ""}
-            onChange={(e) => setField("2", e.target.value)}
-            inputMode="decimal"
-          />
-        </div>
-        <div>
-          <div style={label}>Over 2.5</div>
-          <input
-            placeholder="e.g. 1.95"
-            style={input}
-            value={odds.O2_5 ?? ""}
-            onChange={(e) => setField("O2_5", e.target.value)}
-            inputMode="decimal"
-          />
-        </div>
-        <div>
-          <div style={label}>BTTS Sí</div>
-          <input
-            placeholder="e.g. 1.85"
-            style={input}
-            value={odds.BTTS_YES ?? ""}
-            onChange={(e) => setField("BTTS_YES", e.target.value)}
-            inputMode="decimal"
-          />
-        </div>
+        <Field k="1" labelText="1 (Local)" ph="2.10" />
+        <Field k="X" labelText="X (Empate)" ph="3.30" />
+        <Field k="2" labelText="2 (Visitante)" ph="3.40" />
+        <Field k="O2_5" labelText="Over 2.5" ph="1.95" />
+        <Field k="BTTS_YES" labelText="BTTS Sí" ph="1.85" />
       </div>
 
       {anyOdds && (
         <div style={{ marginTop: 10 }}>
           <button
-            onClick={() => setOdds({})}
+            onClick={() => {
+              setOdds({});
+              setRawOdds({});
+            }}
             style={{ ...pill, cursor: "pointer" }}
           >
             🧹 Limpiar cuotas
@@ -370,6 +376,112 @@ function riskLabel(prob01: number, ev?: number) {
   return level;
 }
 
+/* ===================== “Ideas extra” (doble oportunidad y combos) ===================== */
+function ExtraSuggestions({ data }: { data: PredictResponse }) {
+  const p1 = data.probs.home_win_pct / 100;
+  const px = data.probs.draw_pct / 100;
+  const p2 = data.probs.away_win_pct / 100;
+  const pO25 = data.probs.over_2_5_pct / 100;
+  const pBTTS = data.probs.btts_pct / 100;
+
+  // Doble oportunidad
+  const p1x = clamp01(p1 + px);
+  const px2 = clamp01(px + p2);
+  const p12 = clamp01(p1 + p2);
+
+  // Combos simples ~ independencia (aprox)
+  const p1x_btts = clamp01(p1x * pBTTS);
+  const px2_o25 = clamp01(px2 * pO25);
+
+  // Favorito + Under 3.5 si el partido pinta de pocos goles
+  const lamSum = (data.poisson.home_lambda ?? 1) + (data.poisson.away_lambda ?? 1);
+  const lowScoring = lamSum < 2.6;
+  const fav = p1 >= p2 ? "1" : "2";
+  const pFav = Math.max(p1, p2);
+  const pUnder35 = clamp01(1 - pO25 * 0.75); // heurística para “cerrado”
+  const pFavU35 = lowScoring ? clamp01(pFav * pUnder35) : 0;
+
+  const suggestions = [
+    {
+      key: "1X",
+      title: "Doble oportunidad: 1X",
+      prob: p1x,
+      reason: "Cobras con Local o Empate (más segura que 1 limpio).",
+    },
+    {
+      key: "X2",
+      title: "Doble oportunidad: X2",
+      prob: px2,
+      reason: "Cobras con Empate o Visitante (útil si el local no es muy fuerte).",
+    },
+    {
+      key: "12",
+      title: "Doble oportunidad: 12",
+      prob: p12,
+      reason: "Gana cualquiera (evitas el empate).",
+    },
+    {
+      key: "1X+BTTS",
+      title: "1X & BTTS Sí",
+      prob: p1x_btts,
+      reason: "Partido equilibrado con goles de ambos.",
+    },
+    {
+      key: "X2+O25",
+      title: "X2 & Over 2.5",
+      prob: px2_o25,
+      reason: "Visitante no pierde y partido con ritmo ofensivo.",
+    },
+    ...(lowScoring
+      ? [
+          {
+            key: "Fav+U35",
+            title: `Favorito (${fav}) & Under 3.5`,
+            prob: pFavU35,
+            reason: "Favorito por poco y tendencia a pocos goles.",
+          },
+        ]
+      : []),
+  ]
+    .filter((s) => s.prob > 0)
+    .sort((a, b) => b.prob - a.prob)
+    .slice(0, 4);
+
+  if (!suggestions.length) return null;
+
+  return (
+    <div style={{ ...panel }}>
+      <div style={{ fontWeight: 900, marginBottom: 8 }}>Ideas extra (opcional)</div>
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+        }}
+      >
+        {suggestions.map((s) => (
+          <div
+            key={s.key}
+            style={{
+              background: "rgba(255,255,255,.04)",
+              border: "1px solid rgba(255,255,255,.08)",
+              borderRadius: 12,
+              padding: 12,
+            }}
+          >
+            <div style={{ fontWeight: 800 }}>{s.title}</div>
+            <div style={{ marginTop: 4 }}>Prob: <b>{pct(s.prob * 100)}</b></div>
+            <div style={{ marginTop: 6, opacity: 0.9 }}>{s.reason}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7 }}>
+        *Prob. combinadas aproximadas (independencia parcial). Úsalo como orientación.
+      </div>
+    </div>
+  );
+}
+
 /* ===================== Loading skeleton ===================== */
 function SkeletonCard() {
   const sk = {
@@ -401,6 +513,7 @@ export default function App() {
   const [home, setHome] = useState("");
   const [away, setAway] = useState("");
   const [odds, setOdds] = useState<Odds>({});
+  const [rawOdds, setRawOdds] = useState<RawOdds>({});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [data, setData] = useState<PredictResponse | null>(null);
@@ -563,7 +676,12 @@ export default function App() {
         </div>
 
         {/* Paso 2: Cuotas opcionales */}
-        <OddsEditor odds={odds} setOdds={setOdds} />
+        <OddsEditor
+          odds={odds}
+          setOdds={setOdds}
+          rawOdds={rawOdds}
+          setRawOdds={setRawOdds}
+        />
 
         {/* CTA fijo inferior (móvil) */}
         <div className="fixedbar">
@@ -651,48 +769,62 @@ export default function App() {
                   </div>
                 </div>
 
-                {risk && (
-                  <div
-                    style={
-                      risk === "Bajo"
-                        ? chip("rgba(34,197,94,.18)", "rgba(34,197,94,.45)")
-                        : risk === "Medio"
-                        ? chip("rgba(234,179,8,.18)", "rgba(234,179,8,.45)")
-                        : chip("rgba(239,68,68,.18)", "rgba(239,68,68,.45)")
-                    }
-                  >
-                    🔎 Riesgo: <b>{risk}</b>
-                  </div>
-                )}
+                {/* Semáforo */}
+                {(() => {
+                  const p01 = (data.best_pick?.prob_pct ?? 0) / 100;
+                  const level = riskLabel(p01);
+                  return (
+                    <div
+                      style={
+                        level === "Bajo"
+                          ? chip("rgba(34,197,94,.18)", "rgba(34,197,94,.45)")
+                          : level === "Medio"
+                          ? chip(
+                              "rgba(234,179,8,.18)",
+                              "rgba(234,179,8,.45)"
+                            )
+                          : chip("rgba(239,68,68,.18)", "rgba(239,68,68,.45)")
+                      }
+                    >
+                      🔎 Riesgo: <b>{level}</b>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* EV/Edge si hay cuotas */}
-              {(ev !== undefined || edge !== undefined) && (
-                <div
-                  style={{
-                    marginTop: 8,
-                    display: "flex",
-                    gap: 10,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <div style={pill}>
-                    💰 EV:{" "}
-                    <b style={{ marginLeft: 6 }}>
-                      {ev !== undefined ? fmt2(ev) : "—"}
-                    </b>
+              {(() => {
+                const { ev, edge, usedOdd } = calcEdgeAndEV(
+                  data.best_pick,
+                  data.probs,
+                  odds
+                );
+                if (ev === undefined && edge === undefined) return null;
+                return (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      display: "flex",
+                      gap: 10,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div style={pill}>
+                      💰 EV: <b style={{ marginLeft: 6 }}>{fmt2(ev)}</b>
+                    </div>
+                    <div style={pill}>
+                      📈 Edge:{" "}
+                      <b style={{ marginLeft: 6 }}>
+                        {edge !== undefined ? `${(edge * 100).toFixed(2)}%` : "—"}
+                      </b>
+                    </div>
+                    <div style={pill}>
+                      🧮 Cuota usada:{" "}
+                      <b style={{ marginLeft: 6 }}>{usedOdd ?? "—"}</b>
+                    </div>
                   </div>
-                  <div style={pill}>
-                    📈 Edge:{" "}
-                    <b style={{ marginLeft: 6 }}>
-                      {edge !== undefined ? `${(edge * 100).toFixed(2)}%` : "—"}
-                    </b>
-                  </div>
-                  <div style={pill}>
-                    🧮 Cuota usada: <b style={{ marginLeft: 6 }}>{usedOdd ?? "—"}</b>
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* ¿Por qué este pick? */}
               <div style={{ marginTop: 10 }}>
@@ -782,6 +914,9 @@ export default function App() {
               </div>
             </div>
 
+            {/* Ideas extra tipo “Sporty” */}
+            <ExtraSuggestions data={data} />
+
             {/* Indicadores extra */}
             <div style={{ ...panel }}>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>
@@ -843,3 +978,4 @@ export default function App() {
     </div>
   );
 }
+
