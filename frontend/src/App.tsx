@@ -1,6 +1,7 @@
 // src/App.tsx
 import { useEffect, useMemo, useState } from "react";
 import BestPickPro from "./components/BestPickPro";
+import ErrorBoundary from "./components/ErrorBoundary";
 /* ===================== Types ===================== */
 type ApiLeagues = { leagues: string[] };
 type ApiTeams = { teams: string[] };
@@ -718,7 +719,11 @@ export default function App() {
             {err}
           </div>
         )}
-        {data && <BestPickPro data={data as any} />}
+        {data && (
+        <ErrorBoundary>
+          <BestPickPro data={data as any} />
+        </ErrorBoundary>
+      )}
         {/* Resultado */}
         {loading && (
           <div style={{ marginTop: 12 }}>
