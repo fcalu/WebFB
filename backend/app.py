@@ -1,3 +1,4 @@
+# backend/app.py
 import os, glob, re
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -12,7 +13,7 @@ from scipy.stats import poisson
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 POISSON_MAX_GOALS = 7
 
-# Priors / pesos
+# Priors / pesos Bayes
 PRIOR_STRENGTH_1X2 = 6.0      # Dirichlet total para 1X2
 PRIOR_STRENGTH_O25 = 6.0      # Beta total para Over 2.5
 PRIOR_STRENGTH_BTTS = 6.0     # Beta total para BTTS
@@ -27,11 +28,18 @@ W_LAMBDA = {
     "ppg": 0.10,        # delta PPG pre-partido -> goles
 }
 
-# Factores para convertir diferencia PPG a gol esperado (~0.25 gol por punto)
+# Conversión de diferencia PPG a goles (~0.25 gol por punto)
 PPG_TO_GOALS = 0.25
 
+# Ventaja local explícita (Home Advantage) multiplicada por diferencia liga (Lh-La)
+HOME_ADVANTAGE_SCALER = 0.12
+
+# Umbrales para modo "value"
+MIN_EV = 0.05           # EV mínimo para recomendar valor
+MIN_PROB_VALUE = 0.38   # prob mínima para recomendar 1/X/2 en modo valor
+
 # ========================= App & CORS ======================
-app = FastAPI(title="FootyMines API (Poisson + Bayes con xG/PPG/porcentajes)")
+app = FastAPI(title="FootyMines API (Poisson + Bayes + xG/PPG/HA)")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
@@ -99,6 +107,16 @@ def confidence_from_prob(p: float, nscale: float = 1.0) -> float:
     conf = max(0.0, min(1.0, abs(p - 0.5) * 2.0 * nscale))
     return round(conf * 100.0, 2)
 
+def self_mean(df: pd.DataFrame, cols: List[str]) -> float:
+    vals = []
+    for c in cols:
+        c2 = _snake(c)
+        if c2 in df.columns:
+            vals.append(pd.to_numeric(df[c2], errors="coerce"))
+    if not vals: return 0.0
+    s = sum(v.fillna(0) for v in vals)
+    return float(s.mean(skipna=True))
+
 # ========================= Carga ligas ======================
 class LeagueStore:
     """
@@ -118,8 +136,8 @@ class LeagueStore:
             "away": "away_team_name",
             "gf_h": "home_team_goal_count",
             "ga_h": "away_team_goal_count",
-            "gf_a": "away_team_goal_count",    # usado desde perspectiva del equipo away (GF)
-            "ga_a": "home_team_goal_count",    # GC cuando es away
+            "gf_a": "away_team_goal_count",    # GF desde perspectiva visitante
+            "ga_a": "home_team_goal_count",    # GC cuando es visitante
             "prematch_xg_h": "home_team_pre_match_xg",
             "prematch_xg_a": "away_team_pre_match_xg",
             "ppg_h": "pre_match_ppg_home",
@@ -155,10 +173,9 @@ class LeagueStore:
         }
 
         # Agregados por equipo (cuando juegan en casa / fuera)
-        # Goles a favor/en contra
         home_group = df.groupby(C["home"]).agg(
             gf_h_mean=(C["gf_h"], "mean"),    # GF de local
-            ga_h_mean=(C["ga_h"], "mean"),    # GC que sufren en casa (goles del rival)
+            ga_h_mean=(C["ga_h"], "mean"),    # GC sufridos en casa
             xg_h_mean=(C["prematch_xg_h"], "mean"),
             ppg_h_mean=(C["ppg_h"], "mean"),
             over25_h_mean=(C["over25_pct"], "mean"),
@@ -166,7 +183,7 @@ class LeagueStore:
         )
         away_group = df.groupby(C["away"]).agg(
             gf_a_mean=(C["gf_a"], "mean"),    # GF de visitante
-            ga_a_mean=(C["ga_a"], "mean"),    # GC que sufren fuera
+            ga_a_mean=(C["ga_a"], "mean"),    # GC sufridos fuera
             xg_a_mean=(C["prematch_xg_a"], "mean"),
             ppg_a_mean=(C["ppg_a"], "mean"),
             over25_a_mean=(C["over25_pct"], "mean"),
@@ -175,17 +192,14 @@ class LeagueStore:
 
         self.team = home_group.join(away_group, how="outer").fillna(0.0)
         self.teams = sorted(self.team.index.astype(str).tolist())
-
         self.cols = C
 
-    # Numero efectivo de partidos del cruce
     def n_eff(self, home: str, away: str) -> int:
         C = self.cols
         h = int((self.df[C["home"]] == home).sum())
         a = int((self.df[C["away"]] == away).sum())
         return int(np.clip(h + a, NEFF_MIN, NEFF_MAX))
 
-    # Construcción de lambdas con mezcla de señales
     def lambdas(self, home: str, away: str) -> Tuple[float, float, Dict[str, float]]:
         T = self.team
         C = self.cols
@@ -194,34 +208,36 @@ class LeagueStore:
         if home not in T.index or away not in T.index:
             raise KeyError("Equipo no encontrado")
 
-        # Señales
+        # Señales base
         Lh, La = means["home_goals"], means["away_goals"]
         h_for  = float(T.loc[home, "gf_h_mean"] or Lh)
         a_agst = float(T.loc[away, "ga_a_mean"] or Lh)
         a_for  = float(T.loc[away, "gf_a_mean"] or La)
         h_agst = float(T.loc[home, "ga_h_mean"] or La)
+        xg_h   = float(T.loc[home, "xg_h_mean"] or Lh)
+        xg_a   = float(T.loc[away, "xg_a_mean"] or La)
+        ppg_h  = float(T.loc[home, "ppg_h_mean"] or 1.0)
+        ppg_a  = float(T.loc[away, "ppg_a_mean"] or 1.0)
+        d_ppg  = (ppg_h - ppg_a) * PPG_TO_GOALS
 
-        xg_h = float(T.loc[home, "xg_h_mean"] or Lh)
-        xg_a = float(T.loc[away, "xg_a_mean"] or La)
-
-        ppg_h = float(T.loc[home, "ppg_h_mean"] or 1.0)
-        ppg_a = float(T.loc[away, "ppg_a_mean"] or 1.0)
-        d_ppg = (ppg_h - ppg_a) * PPG_TO_GOALS  # en goles
-
-        # λ final (mezcla convexa + delta ppg)
+        # Lambdas sin HA explícita
         lam_h = (W_LAMBDA["league"]*Lh + W_LAMBDA["team_for"]*h_for +
                  W_LAMBDA["opp_against"]*a_agst + W_LAMBDA["xg"]*xg_h) + W_LAMBDA["ppg"]*max(d_ppg, -0.5)
         lam_a = (W_LAMBDA["league"]*La + W_LAMBDA["team_for"]*a_for +
                  W_LAMBDA["opp_against"]*h_agst + W_LAMBDA["xg"]*xg_a) + W_LAMBDA["ppg"]*max(-d_ppg, -0.5)
 
+        # Ventaja local explícita (suave)
+        ha = max(0.0, Lh - La)
+        lam_h += HOME_ADVANTAGE_SCALER * ha
+
         lam_h = float(max(lam_h, 0.05))
         lam_a = float(max(lam_a, 0.05))
 
         dbg = dict(Lh=Lh, La=La, h_for=h_for, a_agst=a_agst, a_for=a_for, h_agst=h_agst,
-                   xg_h=xg_h, xg_a=xg_a, d_ppg=d_ppg, lam_h=lam_h, lam_a=lam_a)
+                   xg_h=xg_h, xg_a=xg_a, ppg_h=ppg_h, ppg_a=ppg_a, d_ppg=d_ppg,
+                   ha=ha, lam_h=lam_h, lam_a=lam_a)
         return lam_h, lam_a, dbg
 
-    # Priors informativos desde porcentajes pre-match (promedio equipo local/visitante)
     def priors_pre_match(self, home: str, away: str) -> Dict[str, Optional[float]]:
         T = self.team
         over25 = None
@@ -230,7 +246,7 @@ class LeagueStore:
             o = (float(T.loc[home, "over25_h_mean"]) + float(T.loc[away, "over25_a_mean"])) / 200.0
             b = (float(T.loc[home, "btts_h_mean"]) + float(T.loc[away, "btts_a_mean"])) / 200.0
             over25 = o if np.isfinite(o) and 0.0 < o < 1.0 else None
-            btts = b if np.isfinite(b) and 0.0 < b < 1.0 else None
+            btts   = b if np.isfinite(b) and 0.0 < b < 1.0 else None
         return {"over25": over25, "btts": btts}
 
 # Memoria de ligas
@@ -255,6 +271,7 @@ class PredictIn(BaseModel):
     home_team: str
     away_team: str
     odds: Optional[Dict[str, Any]] = None  # {"1":2.3,"X":3.1,"2":3.2,"O2_5":1.85,"BTTS_YES":1.80}
+    mode: Optional[str] = "value"          # "value" (EV) o "prob"
 
 class BestPick(BaseModel):
     market: str
@@ -283,7 +300,8 @@ def bayes_dirichlet_1x2(p_model: np.ndarray, p_mkt: Optional[Dict[str, float]], 
     alpha_post = alpha0 + n_eff * p_model
     return (alpha_post / alpha_post.sum()).astype(float)
 
-def bayes_beta(p_model: float, pi_prior: Optional[float], odds_prior: Optional[float], prior_strength: float, n_eff: int) -> float:
+def bayes_beta(p_model: float, pi_prior: Optional[float], odds_prior: Optional[float],
+               prior_strength: float, n_eff: int) -> float:
     """
     Mezcla Beta con prior combinado:
       - pi_prior (porcentaje pre-match, 0..1)
@@ -325,7 +343,7 @@ def predict(inp: PredictIn):
     if not home or not away or home == away:
         raise HTTPException(status_code=400, detail="Equipos inválidos")
 
-    # Lambdas con señales (goles, xG, PPG)
+    # Lambdas con señales (goles, xG, PPG) + Home Advantage
     lam_h, lam_a, dbg_lambda = store.lambdas(home, away)
 
     # Poisson base
@@ -360,44 +378,62 @@ def predict(inp: PredictIn):
         "o25_mlp_pct": round(po25b * 100, 2),
     }
 
-    # Best pick (con EV si hay cuotas)
+    # ---------------- Best pick con modos ----------------
     reasons = [
-        f"λ_home={lam_h:.2f}, λ_away={lam_a:.2f} (xG/PPG/medias).",
+        f"λ_home={lam_h:.2f}, λ_away={lam_a:.2f} (xG/PPG/medias + HA).",
         f"n_eff={n_eff}, priors: over25={pre_priors['over25']}, btts={pre_priors['btts']}.",
     ]
+
+    # (market, sel, prob, odd)
+    options_prob = [
+        ("1X2", "1",  p1b, (inp.odds and _to_float((inp.odds or {}).get("1") or (inp.odds or {}).get("odds_ft_home_team_win")))),
+        ("1X2", "X",  pxb, (inp.odds and _to_float((inp.odds or {}).get("X") or (inp.odds or {}).get("odds_ft_draw")))),
+        ("1X2", "2",  p2b, (inp.odds and _to_float((inp.odds or {}).get("2") or (inp.odds or {}).get("odds_ft_away_team_win")))),
+        ("Over 2.5", "Sí", po25b, (inp.odds and _to_float((inp.odds or {}).get("O2_5") or (inp.odds or {}).get("odds_ft_over25")))),
+        ("BTTS", "Sí", pbttsb, (inp.odds and _to_float((inp.odds or {}).get("BTTS_YES") or (inp.odds or {}).get("odds_btts_yes")))),
+    ]
+
+    # Candidatos con EV (si hay cuota)
+    cands_ev = []
+    for market, sel, p, odd in options_prob:
+        if odd:
+            ev = p * odd - 1.0
+            cands_ev.append((market, sel, p, ev, odd))
+
+    mode = (inp.mode or "value").lower().strip()
+
     best_market, best_sel, best_prob = "1X2", "1", p1b
-    best_conf = confidence_from_prob(best_prob)
-    if p2b > best_prob: best_market, best_sel, best_prob, best_conf = "1X2", "2", p2b, confidence_from_prob(p2b)
-    if pxb > best_prob: best_market, best_sel, best_prob, best_conf = "1X2", "X", pxb, confidence_from_prob(pxb)
-    if po25b > best_prob: best_market, best_sel, best_prob, best_conf = "Over 2.5", "Sí", po25b, confidence_from_prob(po25b)
-    if pbttsb > best_prob: best_market, best_sel, best_prob, best_conf = "BTTS", "Sí", pbttsb, confidence_from_prob(pbttsb)
+    best_conf = confidence_from_prob(p1b)
+    picked_by = "prob"
 
-    if inp.odds:
-        cands = []
-        for k, p in [("1", p1b), ("X", pxb), ("2", p2b)]:
-            odd = _to_float((inp.odds or {}).get(k) or (inp.odds or {}).get({"1":"odds_ft_home_team_win","X":"odds_ft_draw","2":"odds_ft_away_team_win"}[k]))
-            if odd:
-                ev = p * odd - 1.0
-                cands.append(("1X2", k, p, ev, odd))
-        odd_o25 = _to_float((inp.odds or {}).get("O2_5") or (inp.odds or {}).get("odds_ft_over25"))
-        if odd_o25:
-            ev = po25b * odd_o25 - 1.0
-            cands.append(("Over 2.5", "Sí", po25b, ev, odd_o25))
-        odd_bty = _to_float((inp.odds or {}).get("BTTS_YES") or (inp.odds or {}).get("odds_btts_yes"))
-        if odd_bty:
-            ev = pbttsb * odd_bty - 1.0
-            cands.append(("BTTS", "Sí", pbttsb, ev, odd_bty))
-        if cands:
-            cands.sort(key=lambda x: (x[3], x[2]), reverse=True)
-            if cands[0][3] > 0:
-                best_market, best_sel, best_prob, best_ev, best_odd = cands[0]
-                best_conf = confidence_from_prob(best_prob)
-                reasons.append(f"Valor esperado {best_ev:+.2f} con cuota {best_odd:.2f}.")
+    if mode == "value" and cands_ev:
+        # Filtra por EV y prob mínimas (para evitar "aciertos raros")
+        cands_ev = [c for c in cands_ev if c[3] >= MIN_EV and c[2] >= MIN_PROB_VALUE]
+        if cands_ev:
+            # Mayor EV; desempata por mayor prob
+            cands_ev.sort(key=lambda x: (x[3], x[2]), reverse=True)
+            market, sel, p, ev, odd = cands_ev[0]
+            best_market, best_sel, best_prob = market, sel, p
+            best_conf = confidence_from_prob(p)
+            picked_by = f"valor (EV {ev:+.2f} con cuota {odd:.2f})"
+            reasons.append(f"Modo valor: EV {ev:+.2f} con cuota {odd:.2f}.")
 
-    summary = f"Partido: {home} vs {away}. Pick: {best_market} – {best_sel} (prob {best_prob*100:.2f}%, conf {best_conf:.0f}/100)."
+    if picked_by == "prob":
+        # Si no se eligió por valor, usa la opción más probable entre las 5
+        options_prob.sort(key=lambda x: x[2], reverse=True)
+        best_market, best_sel, best_prob, odd = options_prob[0]
+        best_conf = confidence_from_prob(best_prob)
+        reasons.append("Modo probabilidad: opción más probable.")
+
+    summary = (
+        f"Partido: {home} vs {away}. Pick: {best_market} – {best_sel} "
+        f"(prob {best_prob*100:.2f}%, conf {best_conf:.0f}/100)."
+    )
     best = BestPick(
-        market=best_market, selection=best_sel,
-        prob_pct=round(best_prob * 100, 2), confidence=best_conf,
+        market=best_market,
+        selection=best_sel,
+        prob_pct=round(best_prob * 100, 2),
+        confidence=best_conf,
         reasons=reasons,
     )
 
@@ -408,9 +444,10 @@ def predict(inp: PredictIn):
         "market_BTTS_YES": mBTY,
         "pre_match_priors": pre_priors,
         "posterior": {"1": p1b, "X": pxb, "2": p2b, "O2_5": po25b, "BTTS": pbttsb},
+        "mode": mode
     }
 
-    # Extras informativos (promedios simples; úsalos en UI si quieres)
+    # Extras informativos (promedios simples para UI)
     extras = {
         "total_yellow_cards_avg": float(self_mean(store.df, ["home_team_yellow_cards","away_team_yellow_cards"])),
         "total_corners_avg": float(self_mean(store.df, ["home_team_corner_count","away_team_corner_count"])),
@@ -424,13 +461,3 @@ def predict(inp: PredictIn):
         averages=extras,
         best_pick=best, summary=summary, debug=dbg
     )
-
-def self_mean(df: pd.DataFrame, cols: List[str]) -> float:
-    vals = []
-    for c in cols:
-        c2 = _snake(c)
-        if c2 in df.columns:
-            vals.append(pd.to_numeric(df[c2], errors="coerce"))
-    if not vals: return 0.0
-    s = sum(v.fillna(0) for v in vals)
-    return float(s.mean(skipna=True))
