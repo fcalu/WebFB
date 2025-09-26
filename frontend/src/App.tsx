@@ -1,6 +1,6 @@
 // src/App.tsx
 import { useEffect, useMemo, useState } from "react";
-
+import BestPickPro from "./components/BestPickPro";
 /* ===================== Types ===================== */
 type ApiLeagues = { leagues: string[] };
 type ApiTeams = { teams: string[] };
@@ -718,7 +718,7 @@ export default function App() {
             {err}
           </div>
         )}
-
+        {data && <BestPickPro data={data as any} />}
         {/* Resultado */}
         {loading && (
           <div style={{ marginTop: 12 }}>
