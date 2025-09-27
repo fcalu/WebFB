@@ -1,33 +1,44 @@
 # backend/app.py
 import os
+import time
 import glob
+import math
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from scipy.stats import poisson
 
-# --------- NUEVO: bandera para activar ensamble avanzado ----------
-USE_ADVANCED = os.getenv("USE_ADVANCED", "1") == "1"
+# (Opcional) calibración Platt con sklearn; si no está, seguimos sin calibrar
 try:
-    from .advanced_models import try_advanced_predict  # type: ignore
+    from sklearn.linear_model import LogisticRegression
+    SKLEARN_OK = True
 except Exception:
-    # si no existe el archivo o falla, seguimos con el modelo base
-    def try_advanced_predict(*args, **kwargs):
-        return None
+    SKLEARN_OK = False
+
+# --------------------------------------------------------------------------------------
+# Feature flags y parámetros (ajusta en variables de entorno en Render)
+# --------------------------------------------------------------------------------------
+USE_DIXON_COLES      = os.getenv("USE_DIXON_COLES", "0") == "1"   # Ajuste leve al empate/diagonal
+DC_RHO               = float(os.getenv("DC_RHO", "0.10"))         # Intensidad del ajuste diagonal
+USE_CALIBRATION      = os.getenv("USE_CALIBRATION", "0") == "1"   # Calibración Platt (si sklearn)
+MARKET_WEIGHT        = float(os.getenv("MARKET_WEIGHT", "0.35"))  # peso de mercado en log-odds
+USE_CACHED_RATINGS   = os.getenv("USE_CACHED_RATINGS", "1") == "1"
+CACHE_TTL_SECONDS    = int(os.getenv("CACHE_TTL_SECONDS", "600")) # 10 min
+EXPOSE_DEBUG         = os.getenv("EXPOSE_DEBUG", "0") == "1"      # anexa campo "debug" en output
 
 # --------------------------------------------------------------------------------------
 # Configuración básica
 # --------------------------------------------------------------------------------------
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-POISSON_MAX_GOALS = 7  # tope de la matriz de Poisson (0..7)
+POISSON_MAX_GOALS = 7
 
-app = FastAPI(title="FootyMines API")
+app = FastAPI(title="FootyMines API (hybrid-core)")
 
-# CORS abierto (ajústalo si quieres)
+# CORS abierto (ajusta si necesitas)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,59 +48,169 @@ app.add_middleware(
 )
 
 # --------------------------------------------------------------------------------------
-# Carga de CSVs y cacheo de estadísticas por liga/equipo
+# Utilidades generales
 # --------------------------------------------------------------------------------------
+def clamp01(x: float) -> float:
+    return max(0.0, min(1.0, float(x)))
+
+def safe_prob(p: float, eps: float = 1e-6) -> float:
+    return clamp01(max(eps, min(1.0 - eps, float(p))))
+
+def logit(p: float) -> float:
+    p = safe_prob(p)
+    return math.log(p / (1.0 - p))
+
+def sigmoid(z: float) -> float:
+    return 1.0 / (1.0 + math.exp(-z))
+
+def blend_logit(p_model: float, p_market: Optional[float], w: float) -> float:
+    """ Mezcla en espacio log-odds: (1-w)*model + w*mercado """
+    if p_market is None:
+        return clamp01(p_model)
+    z = (1.0 - w) * logit(p_model) + w * logit(p_market)
+    return clamp01(sigmoid(z))
+
+def implied_1x2(odds: Dict[str, float]) -> Optional[Dict[str, float]]:
+    """ Convierte 1/X/2 a probabilidades implícitas normalizadas """
+    try:
+        o1, ox, o2 = float(odds["1"]), float(odds["X"]), float(odds["2"])
+    except Exception:
+        return None
+    inv = np.array([1.0 / o1, 1.0 / ox, 1.0 / o2], dtype=float)
+    s = inv.sum()
+    if s <= 0:
+        return None
+    probs = inv / s
+    return {"1": float(probs[0]), "X": float(probs[1]), "2": float(probs[2])}
+
+def implied_single(odd: Optional[float]) -> Optional[float]:
+    if odd is None:
+        return None
+    try:
+        odd = float(odd)
+    except Exception:
+        return None
+    if odd <= 1e-9:
+        return None
+    return 1.0 / odd
+
+# --------------------------------------------------------------------------------------
+# Matrices de Poisson y (opcional) ajuste DC ligero
+# --------------------------------------------------------------------------------------
+def poisson_matrix(lh: float, la: float, kmax: int = POISSON_MAX_GOALS) -> np.ndarray:
+    """Matriz (kmax+1 x kmax+1) de probabilidades de marcador i-j."""
+    i = np.arange(0, kmax + 1)
+    j = np.arange(0, kmax + 1)
+    ph = poisson.pmf(i, lh).reshape(-1, 1)
+    pa = poisson.pmf(j, la).reshape(1, -1)
+    M = ph @ pa
+    M = M / M.sum()
+    return M
+
+def dixon_coles_soft(M: np.ndarray, rho: float) -> np.ndarray:
+    """
+    Ajuste leve a la masa de empates bajos. Multiplica 0-0 y 1-1 por (1+rho)
+    y renormaliza. Es una aproximación suave y segura (no exacta DC).
+    """
+    M = M.copy()
+    kmax = M.shape[0] - 1
+    for (i, j) in [(0, 0), (1, 1)]:
+        if i <= kmax and j <= kmax:
+            M[i, j] *= (1.0 + rho)
+    M = M / M.sum()
+    return M
+
+def matrix_1x2_o25_btts(M: np.ndarray) -> Dict[str, float]:
+    """Agrega la matriz a probabilidades de 1/X/2, Over2.5 y BTTS."""
+    kmax = M.shape[0] - 1
+    home = float(np.tril(M, -1).sum())          # i > j
+    draw = float(np.trace(M))                   # i == j
+    away = float(np.triu(M, 1).sum())           # i < j
+    over25 = float(sum(M[i, j] for i in range(kmax + 1)
+                       for j in range(kmax + 1) if (i + j) >= 3))
+    btts = float(sum(M[i, j] for i in range(1, kmax + 1)
+                     for j in range(1, kmax + 1)))
+    # Top scorelines
+    pairs = [((i, j), float(M[i, j])) for i in range(kmax + 1) for j in range(kmax + 1)]
+    pairs.sort(key=lambda x: x[1], reverse=True)
+    top = [{"score": f"{a}-{b}", "pct": round(p * 100, 2)} for (a, b), p in pairs[:5]]
+    return {
+        "home_win_pct": round(home * 100, 2),
+        "draw_pct": round(draw * 100, 2),
+        "away_win_pct": round(away * 100, 2),
+        "over_2_5_pct": round(over25 * 100, 2),
+        "btts_pct": round(btts * 100, 2),
+        "top_scorelines": top,
+    }
+
+# --------------------------------------------------------------------------------------
+# League store (stats por liga) + calibradores opcionales
+# --------------------------------------------------------------------------------------
+class PlattScaler:
+    """ Calibración Platt: p' = sigmoid(a*logit(p)+b) """
+    def __init__(self, a: float = 1.0, b: float = 0.0):
+        self.a = a
+        self.b = b
+
+    def __call__(self, p: float) -> float:
+        z = self.a * logit(p) + self.b
+        return clamp01(sigmoid(z))
+
+class TrioCalibrator:
+    """
+    Calibrador multi-clase simple para 1X2 (one-vs-rest con renormalización).
+    """
+    def __init__(self, h: PlattScaler, d: PlattScaler, a: PlattScaler):
+        self.h = h
+        self.d = d
+        self.a = a
+
+    def __call__(self, ph: float, pd: float, pa: float) -> Tuple[float, float, float]:
+        h = self.h(ph)
+        d = self.d(pd)
+        a = self.a(pa)
+        s = max(1e-9, (h + d + a))
+        return (h / s, d / s, a / s)
+
 class LeagueStore:
     def __init__(self, name: str, df: pd.DataFrame):
         self.name = name
-        self.df = df
+        self.df = df.copy()
 
-        # Normaliza columnas que usamos
-        self.cols = {
-            "home_team_name": "home_team_name",
-            "away_team_name": "away_team_name",
-            "home_team_goal_count": "home_team_goal_count",
-            "away_team_goal_count": "away_team_goal_count",
-            "home_team_yellow_cards": "home_team_yellow_cards",
-            "away_team_yellow_cards": "away_team_yellow_cards",
-            "home_team_corner_count": "home_team_corner_count",
-            "away_team_corner_count": "away_team_corner_count",
-        }
-        for c in list(self.cols.values()):
-            if c not in self.df.columns:
-                self.df[c] = 0
+        # Columnas mínimas esperadas; si no están, se crean
+        for col in [
+            "home_team_name", "away_team_name",
+            "home_team_goal_count", "away_team_goal_count",
+            "home_team_yellow_cards", "away_team_yellow_cards",
+            "home_team_corner_count", "away_team_corner_count",
+        ]:
+            if col not in self.df.columns:
+                self.df[col] = 0
 
-        # Asegura tipos numéricos
-        num_cols = [
-            "home_team_goal_count",
-            "away_team_goal_count",
-            "home_team_yellow_cards",
-            "away_team_yellow_cards",
-            "home_team_corner_count",
-            "away_team_corner_count",
-        ]
-        for c in num_cols:
-            self.df[c] = pd.to_numeric(self.df[c], errors="coerce").fillna(0)
+        # Tipo numérico
+        for col in [
+            "home_team_goal_count", "away_team_goal_count",
+            "home_team_yellow_cards", "away_team_yellow_cards",
+            "home_team_corner_count", "away_team_corner_count",
+        ]:
+            self.df[col] = pd.to_numeric(self.df[col], errors="coerce").fillna(0)
 
         # Medias de liga
         self.league_means = {
             "home_goals": float(self.df["home_team_goal_count"].mean() or 0.0),
             "away_goals": float(self.df["away_team_goal_count"].mean() or 0.0),
             "goals_per_game": float(
-                (self.df["home_team_goal_count"] + self.df["away_team_goal_count"]).mean()
-                or 0.0
+                (self.df["home_team_goal_count"] + self.df["away_team_goal_count"]).mean() or 0.0
             ),
             "corners_per_game": float(
-                (self.df["home_team_corner_count"] + self.df["away_team_corner_count"]).mean()
-                or 0.0
+                (self.df["home_team_corner_count"] + self.df["away_team_corner_count"]).mean() or 0.0
             ),
             "yellows_per_game": float(
-                (self.df["home_team_yellow_cards"] + self.df["away_team_yellow_cards"]).mean()
-                or 0.0
+                (self.df["home_team_yellow_cards"] + self.df["away_team_yellow_cards"]).mean() or 0.0
             ),
         }
 
-        # Estadísticos por equipo
+        # Stats por equipo (medias home/away a favor y en contra)
         home_group = self.df.groupby("home_team_name").agg(
             home_goals_for=("home_team_goal_count", "mean"),
             home_goals_against=("away_team_goal_count", "mean"),
@@ -102,22 +223,37 @@ class LeagueStore:
             away_corners=("away_team_corner_count", "mean"),
             away_yellows=("away_team_yellow_cards", "mean"),
         )
-        self.team_stats = home_group.join(away_group, how="outer").fillna(0)
+        self.team_stats = home_group.join(away_group, how="outer").fillna(0.0)
         self.teams = sorted(self.team_stats.index.astype(str).tolist())
 
+        # Rho DC leve (opcional): fijo por liga o derivado de draws empíricos
+        self.dc_rho = float(DC_RHO)
+
+        # Calibradores (opcionales)
+        self.cal_1x2: Optional[TrioCalibrator] = None
+        self.cal_o25: Optional[PlattScaler] = None
+        self.cal_btts: Optional[PlattScaler] = None
+
+        if USE_CALIBRATION and SKLEARN_OK:
+            try:
+                self._fit_calibrators()
+            except Exception:
+                # Si algo falla, seguimos sin calibración
+                self.cal_1x2 = None
+                self.cal_o25 = None
+                self.cal_btts = None
+
     def get_lambda_pair(self, home: str, away: str) -> Tuple[float, float]:
-        """Lambdas home/away con un modelo aditivo simple (tu base)."""
+        """ Lambdas desde medias por equipo ajustadas a medias de liga. """
         if home not in self.team_stats.index or away not in self.team_stats.index:
             raise KeyError("Equipo no encontrado en esta liga")
 
         ts = self.team_stats
-        means = self.league_means
-        Lh = max(means["home_goals"], 0.1)
-        La = max(means["away_goals"], 0.1)
+        Lh = max(self.league_means["home_goals"], 0.1)
+        La = max(self.league_means["away_goals"], 0.1)
 
         home_att = (ts.loc[home, "home_goals_for"] or Lh) / Lh
         away_def = (ts.loc[away, "away_goals_against"] or Lh) / Lh
-
         away_att = (ts.loc[away, "away_goals_for"] or La) / La
         home_def = (ts.loc[home, "home_goals_against"] or La) / La
 
@@ -138,9 +274,87 @@ class LeagueStore:
             "total_yellow_cards_avg": max(home_y + away_y, 0.0),
         }
 
+    # ---------- Calibración (opcional) ----------
+    def _fit_calibrators(self):
+        """Ajusta calibración Platt para 1X2, Over2.5 y BTTS usando nuestro modelo como feature."""
+        # Construye dataset de matches válidos
+        rows = self.df[[
+            "home_team_name","away_team_name",
+            "home_team_goal_count","away_team_goal_count"
+        ]].dropna()
+        if len(rows) < 200:
+            # muy pocos datos, omitimos
+            return
 
+        X_model = []
+        y_home = []
+        y_draw = []
+        y_away = []
+        y_o25  = []
+        y_btts = []
+
+        for _, r in rows.iterrows():
+            h = str(r["home_team_name"])
+            a = str(r["away_team_name"])
+            gh = float(r["home_team_goal_count"])
+            ga = float(r["away_team_goal_count"])
+
+            try:
+                lam_h, lam_a = self.get_lambda_pair(h, a)
+            except Exception:
+                continue
+
+            M = poisson_matrix(lam_h, lam_a, kmax=POISSON_MAX_GOALS)
+            if USE_DIXON_COLES:
+                M = dixon_coles_soft(M, self.dc_rho)
+
+            agg = matrix_1x2_o25_btts(M)
+            p1 = agg["home_win_pct"] / 100.0
+            px = agg["draw_pct"] / 100.0
+            p2 = agg["away_win_pct"] / 100.0
+            po = agg["over_2_5_pct"] / 100.0
+            pb = agg["btts_pct"] / 100.0
+
+            X_model.append([logit(p1), logit(px), logit(p2), logit(po), logit(pb)])
+
+            y_home.append(1.0 if gh > ga else 0.0)
+            y_draw.append(1.0 if gh == ga else 0.0)
+            y_away.append(1.0 if gh < ga else 0.0)
+            y_o25.append(1.0 if (gh + ga) >= 3 else 0.0)
+            y_btts.append(1.0 if (gh > 0 and ga > 0) else 0.0)
+
+        if len(X_model) < 200:
+            return
+
+        X = np.array(X_model, dtype=float)
+        # Entrena un LR por mercado con la feature correspondiente
+        def platt_fit(col: int, y: List[float]) -> Optional[PlattScaler]:
+            try:
+                lr = LogisticRegression(max_iter=200)
+                lr.fit(X[:, [col]], np.array(y))
+                a = float(lr.coef_[0][0]); b = float(lr.intercept_[0])
+                return PlattScaler(a, b)
+            except Exception:
+                return None
+
+        # 0:home,1:draw,2:away,3:o25,4:btts (por cómo llenamos X)
+        ch = platt_fit(0, y_home)
+        cd = platt_fit(1, y_draw)
+        ca = platt_fit(2, y_away)
+        co = platt_fit(3, y_o25)
+        cb = platt_fit(4, y_btts)
+
+        if ch and cd and ca:
+            self.cal_1x2 = TrioCalibrator(ch, cd, ca)
+        if co:
+            self.cal_o25 = co
+        if cb:
+            self.cal_btts = cb
+
+# --------------------------------------------------------------------------------------
+# Carga de ligas y cache básico
+# --------------------------------------------------------------------------------------
 LEAGUES: Dict[str, LeagueStore] = {}
-
 
 def load_all_leagues():
     LEAGUES.clear()
@@ -153,8 +367,31 @@ def load_all_leagues():
             df = pd.read_csv(path, encoding="latin-1", low_memory=False)
         LEAGUES[name] = LeagueStore(name, df)
 
-
 load_all_leagues()
+
+# Cache simple (clave → (ts, data))
+_CACHE: Dict[str, Tuple[float, dict]] = {}
+
+def cache_get(key: str) -> Optional[dict]:
+    it = _CACHE.get(key)
+    if not it:
+        return None
+    ts, val = it
+    if (time.time() - ts) > CACHE_TTL_SECONDS:
+        _CACHE.pop(key, None)
+        return None
+    return val
+
+def cache_set(key: str, val: dict):
+    _CACHE[key] = (time.time(), val)
+
+def cache_key(league: str, home: str, away: str, odds: Optional[Dict[str, float]]) -> str:
+    # redondea cuotas para que cambios mínimos no invalide
+    if odds:
+        o = {k: round(float(v), 3) for k, v in odds.items() if v is not None}
+    else:
+        o = {}
+    return f"{league}::{home}::{away}::{sorted(o.items())}"
 
 # --------------------------------------------------------------------------------------
 # Modelos de entrada/salida
@@ -163,8 +400,8 @@ class PredictIn(BaseModel):
     league: str
     home_team: str
     away_team: str
-    odds: Optional[Dict[str, float]] = None  # {"1":2.1,"X":3.2,"2":3.5,"O2_5":1.9}
-
+    odds: Optional[Dict[str, float]] = None  # {"1":2.1,"X":3.2,"2":3.5,"O2_5":1.9,"BTTS_YES":1.8}
+    # 'mode' se ignora por compatibilidad (frontend puede enviarlo)
 
 class BestPick(BaseModel):
     market: str
@@ -172,7 +409,6 @@ class BestPick(BaseModel):
     prob_pct: float
     confidence: float
     reasons: List[str]
-
 
 class PredictOut(BaseModel):
     league: str
@@ -183,89 +419,159 @@ class PredictOut(BaseModel):
     averages: Dict[str, float]
     best_pick: BestPick
     summary: str
-    # opcionales (no rompen el front si no los usas):
-    ev: Optional[float] = None
-    kelly: Optional[float] = None
-    edge_pct: Optional[float] = None
-
+    debug: Optional[Dict[str, object]] = None
 
 # --------------------------------------------------------------------------------------
-# Utilidades base (modelo anterior)
+# Núcleo de predicción (mejorado pero backward-compatible)
 # --------------------------------------------------------------------------------------
-def poisson_matrix(lh: float, la: float, kmax: int = POISSON_MAX_GOALS) -> np.ndarray:
-    i = np.arange(0, kmax + 1)
-    j = np.arange(0, kmax + 1)
-    ph = poisson.pmf(i, lh).reshape(-1, 1)
-    pa = poisson.pmf(j, la).reshape(1, -1)
-    M = ph @ pa
-    return M / M.sum()
+def confidence_from_prob(p: float) -> float:
+    # 0..100 según distancia a 0.5 (simple y estable)
+    return round(max(0.0, min(1.0, abs(p - 0.5) * 2.0)) * 100.0, 2)
 
+def predict_core(store: LeagueStore, home: str, away: str, odds: Optional[Dict[str, float]]):
+    lam_h, lam_a = store.get_lambda_pair(home, away)
 
-def probs_from_matrix(M: np.ndarray) -> Dict[str, float]:
-    kmax = M.shape[0] - 1
-    home = float(np.tril(M, -1).sum())
-    draw = float(np.trace(M))
-    away = float(np.triu(M, 1).sum())
-    over25 = float(sum(M[i, j] for i in range(kmax + 1) for j in range(kmax + 1) if (i + j) >= 3))
-    btts = float(sum(M[i, j] for i in range(1, kmax + 1) for j in range(1, kmax + 1)))
-    pairs = []
-    for i in range(kmax + 1):
-        for j in range(kmax + 1):
-            pairs.append(((i, j), float(M[i, j])))
-    pairs.sort(key=lambda x: x[1], reverse=True)
-    top = [{"score": f"{a}-{b}", "pct": round(p * 100, 2)} for (a, b), p in pairs[:5]]
-    return {
-        "home_win_pct": round(home * 100, 2),
-        "draw_pct": round(draw * 100, 2),
-        "away_win_pct": round(away * 100, 2),
-        "over_2_5_pct": round(over25 * 100, 2),
-        "btts_pct": round(btts * 100, 2),
-        "top_scorelines": top,
+    M = poisson_matrix(lam_h, lam_a, kmax=POISSON_MAX_GOALS)
+    if USE_DIXON_COLES:
+        M = dixon_coles_soft(M, store.dc_rho)
+
+    base = matrix_1x2_o25_btts(M)
+
+    # Modelo base 0..1
+    p1  = base["home_win_pct"] / 100.0
+    px  = base["draw_pct"] / 100.0
+    p2  = base["away_win_pct"] / 100.0
+    po  = base["over_2_5_pct"] / 100.0
+    pb  = base["btts_pct"] / 100.0
+
+    # Calibración (opcional)
+    if USE_CALIBRATION and store.cal_1x2:
+        p1, px, p2 = store.cal_1x2(p1, px, p2)
+    if USE_CALIBRATION and store.cal_o25:
+        po = store.cal_o25(po)
+    if USE_CALIBRATION and store.cal_btts:
+        pb = store.cal_btts(pb)
+
+    # Mezcla con mercado en log-odds
+    m1x2 = implied_1x2(odds or {})
+    mo25 = implied_single((odds or {}).get("O2_5"))
+    mbtts = implied_single((odds or {}).get("BTTS_YES"))
+
+    p1b = blend_logit(p1,  m1x2["1"] if m1x2 else None, MARKET_WEIGHT)
+    pxb = blend_logit(px,  m1x2["X"] if m1x2 else None, MARKET_WEIGHT)
+    p2b = blend_logit(p2,  m1x2["2"] if m1x2 else None, MARKET_WEIGHT)
+    pob = blend_logit(po,  mo25,                         MARKET_WEIGHT)
+    pbb = blend_logit(pb,  mbtts,                        MARKET_WEIGHT)
+
+    probs_out = {
+        "home_win_pct": round(p1b * 100, 2),
+        "draw_pct": round(pxb * 100, 2),
+        "away_win_pct": round(p2b * 100, 2),
+        "over_2_5_pct": round(pob * 100, 2),
+        "btts_pct": round(pbb * 100, 2),
+        "o25_mlp_pct": round(pob * 100, 2),  # compat front: no None
     }
 
+    # Extras
+    extras = store.get_additional_avgs(home, away)
+    poisson_info = {
+        "home_lambda": round(lam_h, 3),
+        "away_lambda": round(lam_a, 3),
+        "top_scorelines": base["top_scorelines"],
+    }
 
-def implied_1x2(odds: Dict[str, float]) -> Optional[Dict[str, float]]:
-    try:
-        o1, ox, o2 = float(odds["1"]), float(odds["X"]), float(odds["2"])
-    except Exception:
-        return None
-    inv = np.array([1.0 / o1, 1.0 / ox, 1.0 / o2], dtype=float)
-    s = inv.sum()
-    if s <= 0:
-        return None
-    probs = inv / s
-    return {"1": probs[0], "X": probs[1], "2": probs[2]}
+    # Best pick (modo “valor” si hay cuotas; si no, el más probable)
+    reasons = [
+        f"λ_home={lam_h:.2f}, λ_away={lam_a:.2f} (Poisson{' + DC' if USE_DIXON_COLES else ''}).",
+        f"Media goles liga={store.league_means['goals_per_game']:.2f}.",
+    ]
 
+    # Candidatos por prob
+    candidates = [
+        ("1X2", "1", p1b, (odds or {}).get("1")),
+        ("1X2", "X", pxb, (odds or {}).get("X")),
+        ("1X2", "2", p2b, (odds or {}).get("2")),
+        ("Over 2.5", "Sí", pob, (odds or {}).get("O2_5")),
+        ("BTTS", "Sí", pbb, (odds or {}).get("BTTS_YES")),
+    ]
 
-def implied_single(odd: Optional[float]) -> Optional[float]:
-    if not odd or odd <= 1e-9:
-        return None
-    return 1.0 / odd
+    # Si hay cuotas, usa EV
+    best_market, best_sel, best_prob = None, None, -1.0
+    best_ev, best_edge, best_odd = None, None, None
 
+    has_any_odds = any(v for _, _, _, v in candidates if v is not None)
+    if has_any_odds:
+        ranked = []
+        for mk, sel, p, odd in candidates:
+            try:
+                odd = float(odd) if odd is not None else None
+            except Exception:
+                odd = None
+            if odd and odd > 1.0:
+                ev = p * odd - 1.0
+                pim = implied_single(odd)
+                edge = p - (pim if pim is not None else 0.0)
+                ranked.append((mk, sel, p, ev, edge, odd))
+        if ranked:
+            ranked.sort(key=lambda x: (x[3], x[2]), reverse=True)  # EV, luego prob
+            mk, sel, p, ev, edge, odd = ranked[0]
+            best_market, best_sel, best_prob = mk, sel, p
+            best_ev, best_edge, best_odd = ev, edge, odd
+            reasons.append(f"Mejor EV con cuota {odd:.2f}: EV={ev:+.2f}, edge={edge:+.2%}.")
+    # Si no hay odds, o ninguna con EV>0, toma mayor prob
+    if best_market is None:
+        candidates.sort(key=lambda x: x[2], reverse=True)
+        mk, sel, p, odd = candidates[0]
+        best_market, best_sel, best_prob = mk, sel, p
 
-def blend(model_p: float, market_p: Optional[float], w: float = 0.35) -> float:
-    if market_p is None:
-        return model_p
-    return float((1 - w) * model_p + w * market_p)
+    best_conf = confidence_from_prob(best_prob)
+    summary = f"Partido: {home} vs {away}. Pick: {best_market} – {best_sel} (prob {best_prob*100:.2f}%, conf {best_conf:.0f}/100)."
 
+    best = BestPick(
+        market=best_market,
+        selection=best_sel,
+        prob_pct=round(best_prob * 100, 2),
+        confidence=best_conf,
+        reasons=reasons,
+    )
 
-def confidence_from_prob(p: float, nscale: float = 1.0) -> float:
-    conf = max(0.0, min(1.0, abs(p - 0.5) * 2.0 * nscale))
-    return round(conf * 100.0, 2)
+    out = {
+        "probs": probs_out,
+        "poisson": poisson_info,
+        "averages": {
+            "total_yellow_cards_avg": round(extras["total_yellow_cards_avg"], 2),
+            "total_corners_avg": round(extras["total_corners_avg"], 2),
+            "corners_mlp_pred": round(extras["total_corners_avg"], 2),  # compat
+        },
+        "best_pick": best,
+        "summary": summary,
+    }
 
+    if EXPOSE_DEBUG:
+        out["debug"] = {
+            "p_model": {"1": p1, "X": px, "2": p2, "O2_5": po, "BTTS": pb},
+            "p_blend": {"1": p1b, "X": pxb, "2": p2b, "O2_5": pob, "BTTS": pbb},
+            "odds": odds or {},
+            "market_impl": m1x2 | {"O2_5": mo25, "BTTS": mbtts} if m1x2 else {"O2_5": mo25, "BTTS": mbtts},
+            "flags": {
+                "USE_DIXON_COLES": USE_DIXON_COLES,
+                "USE_CALIBRATION": USE_CALIBRATION,
+                "MARKET_WEIGHT": MARKET_WEIGHT,
+            },
+        }
+
+    return out
 
 # --------------------------------------------------------------------------------------
 # Endpoints
 # --------------------------------------------------------------------------------------
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "leagues": len(LEAGUES), "advanced": USE_ADVANCED}
-
+    return {"ok": True, "leagues": len(LEAGUES)}
 
 @app.get("/leagues")
 def get_leagues():
     return {"leagues": sorted(LEAGUES.keys())}
-
 
 @app.get("/teams")
 def get_teams(league: str):
@@ -273,9 +579,8 @@ def get_teams(league: str):
         return {"teams": []}
     return {"teams": LEAGUES[league].teams}
 
-
 @app.post("/predict", response_model=PredictOut)
-def predict(inp: PredictIn):
+def predict(inp: PredictIn, request: Request):
     if inp.league not in LEAGUES:
         raise HTTPException(status_code=400, detail="Liga no encontrada")
     store = LEAGUES[inp.league]
@@ -285,147 +590,30 @@ def predict(inp: PredictIn):
     if home == away:
         raise HTTPException(status_code=400, detail="Equipos deben ser distintos")
 
-    # ----------------- 1) INTENTO AVANZADO -----------------
-    if USE_ADVANCED:
+    # Cache por partido + cuotas
+    key = cache_key(inp.league, home, away, inp.odds)
+    cached = cache_get(key)
+    if USE_CACHED_RATINGS and cached:
+        base = cached
+    else:
         try:
-            adv = try_advanced_predict(
-                league_name=inp.league,
-                home=home,
-                away=away,
-                odds=inp.odds or {},
-                store=store,
-            )
-            if adv:
-                bp = adv["best_pick"]
-                best = BestPick(
-                    market=bp["market"],
-                    selection=bp["selection"],
-                    prob_pct=bp["prob_pct"],
-                    confidence=bp["confidence"],
-                    reasons=bp.get("reasons", []),
-                )
-                return PredictOut(
-                    league=inp.league,
-                    home_team=home,
-                    away_team=away,
-                    probs=adv["probs"],
-                    poisson=adv["poisson"],
-                    averages=adv["averages"],
-                    best_pick=best,
-                    summary=adv["summary"],
-                )
+            base = predict_core(store, home, away, inp.odds)
+        except KeyError:
+            raise HTTPException(status_code=400, detail="Equipo no encontrado en esta liga")
         except Exception as e:
-            # log y continuamos con fallback
-            print("ADVANCED MODEL ERROR → fallback. ", e)
+            raise HTTPException(status_code=500, detail=f"Error interno: {e}")
+        cache_set(key, base)
 
-    # ----------------- 2) FALLBACK (tu modelo base) -----------------
-    try:
-        lam_h, lam_a = store.get_lambda_pair(home, away)
-    except KeyError:
-        raise HTTPException(status_code=400, detail="Equipo no encontrado en esta liga")
-
-    M = poisson_matrix(lam_h, lam_a, kmax=POISSON_MAX_GOALS)
-    base = probs_from_matrix(M)
-
-    market_1x2 = implied_1x2(inp.odds or {})
-    market_o25 = implied_single((inp.odds or {}).get("O2_5"))
-
-    p1 = base["home_win_pct"] / 100.0
-    px = base["draw_pct"] / 100.0
-    p2 = base["away_win_pct"] / 100.0
-    po25 = base["over_2_5_pct"] / 100.0
-    pbtts = base["btts_pct"] / 100.0
-
-    p1b = blend(p1, market_1x2["1"] if market_1x2 else None)
-    pxb = blend(px, market_1x2["X"] if market_1x2 else None)
-    p2b = blend(p2, market_1x2["2"] if market_1x2 else None)
-    po25b = blend(po25, market_o25)
-
-    over25_pct = round(po25b * 100, 2)
-    probs_out = {
-        "home_win_pct": round(p1b * 100, 2),
-        "draw_pct": round(pxb * 100, 2),
-        "away_win_pct": round(p2b * 100, 2),
-        "over_2_5_pct": over25_pct,
-        "btts_pct": round(pbtts * 100, 2),
-        "o25_mlp_pct": over25_pct,  # nunca None
-    }
-
-    extras = store.get_additional_avgs(home, away)
-    poisson_info = {
-        "home_lambda": round(lam_h, 3),
-        "away_lambda": round(lam_a, 3),
-        "top_scorelines": base["top_scorelines"],
-    }
-
-    reasons = [
-        f"λ local {lam_h:.2f} vs λ visitante {lam_a:.2f}.",
-        f"Media de goles liga: {store.league_means['goals_per_game']:.2f}.",
-        f"Corners medios estimados: {extras['total_corners_avg']:.2f}.",
-    ]
-
-    best_market = "1X2"
-    best_sel = "1"
-    best_prob = p1b
-    best_conf = confidence_from_prob(best_prob)
-
-    if (p2b > best_prob):
-        best_prob = p2b
-        best_sel = "2"
-        best_conf = confidence_from_prob(best_prob)
-    if (pxb > best_prob):
-        best_prob = pxb
-        best_sel = "X"
-        best_conf = confidence_from_prob(best_prob)
-    if (po25b > best_prob):
-        best_market = "Over 2.5"
-        best_sel = "Sí"
-        best_prob = po25b
-        best_conf = confidence_from_prob(best_prob)
-
-    # EV si hay cuotas
-    if inp.odds:
-        candidates = []
-        for key, p in [("1", p1b), ("X", pxb), ("2", p2b)]:
-            odd = float(inp.odds.get(key, 0) or 0)
-            if odd > 1.0:
-                ev = p * odd - 1.0
-                candidates.append(("1X2", key, p, ev, odd))
-        odd_o25 = float(inp.odds.get("O2_5", 0) or 0)
-        if odd_o25 > 1.0:
-            ev = po25b * odd_o25 - 1.0
-            candidates.append(("Over 2.5", "Sí", po25b, ev, odd_o25))
-        if candidates:
-            candidates.sort(key=lambda x: (x[3], x[2]), reverse=True)
-            if candidates[0][3] > 0:
-                best_market, best_sel, best_prob, best_ev, best_odd = candidates[0]
-                best_conf = confidence_from_prob(best_prob)
-                reasons.append(f"EV {best_ev:+.2f} con cuota {best_odd:.2f}.")
-
-    summary = (
-        f"Partido: {home} vs {away}. "
-        f"Mejor jugada: {best_market} – {best_sel} "
-        f"(prob {best_prob*100:.2f}%, confianza {best_conf:.0f}/100)."
-    )
-    best = BestPick(
-        market=best_market,
-        selection=best_sel,
-        prob_pct=round(best_prob * 100, 2),
-        confidence=best_conf,
-        reasons=reasons,
-    )
-
-    return PredictOut(
+    # Arma respuesta
+    out = PredictOut(
         league=inp.league,
         home_team=home,
         away_team=away,
-        probs=probs_out,
-        poisson=poisson_info,
-        averages={
-            "total_yellow_cards_avg": round(extras["total_yellow_cards_avg"], 2),
-            "total_corners_avg": round(extras["total_corners_avg"], 2),
-            "corners_mlp_pred": round(extras["total_corners_avg"], 2),
-        },
-        best_pick=best,
-        summary=summary,
+        probs=base["probs"],
+        poisson=base["poisson"],
+        averages=base["averages"],
+        best_pick=base["best_pick"],
+        summary=base["summary"],
+        debug=base.get("debug"),
     )
+    return out
