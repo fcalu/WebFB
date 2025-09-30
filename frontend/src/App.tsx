@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import BestPickPro from "./components/BestPickPro";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ParlayDrawer from "./components/ParlayDrawer";
+import BuilderDrawer from "./components/BuilderDrawer";
+
 
 // NUEVO: módulos de stake/historial
 import StakeModal from "./components/StakeModal";
@@ -130,9 +132,11 @@ const pill: React.CSSProperties = {
 function Header({
   onOpenHistory,
   onOpenParlay,
+  onOpenBuilder,
 }: {
   onOpenHistory: () => void;
   onOpenParlay: () => void;
+  onOpenBuilder: () => void;
 }) {
   return (
     <div
@@ -202,6 +206,22 @@ function Header({
           }}
         >
           ☰ Parley
+        </button>
+        <button
+          onClick={onOpenBuilder}
+          title="Generador de selección"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.12)",
+            color: "#d1d5db",
+            background: "rgba(255,255,255,.06)",
+          }}
+        >
+          🎯 Selección
         </button>
       </div>
     </div>
@@ -319,6 +339,8 @@ export default function App() {
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [stakeOpen, setStakeOpen] = useState(false);
+   const [builderOpen, setBuilderOpen] = useState(false);
+
 
   useEffect(() => {
     fetch(`${API_BASE}/leagues`)
@@ -439,6 +461,7 @@ export default function App() {
         <Header
           onOpenHistory={() => setHistOpen(true)}
           onOpenParlay={() => setParlayOpen(true)}
+          onOpenBuilder={() => setBuilderOpen(true)}
         />
 
         {/* Paso 1: Selección */}
@@ -549,6 +572,17 @@ export default function App() {
           API_BASE={API_BASE}
           isPremium={true /* o tu flag real */}
         />
+
+        <BuilderDrawer
+        open={builderOpen}
+        onClose={() => setBuilderOpen(false)}
+        API_BASE={API_BASE}
+        league={league}
+        home={home}
+        away={away}
+        odds={odds}
+      />
+
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
 
         {/* Resultado (UNA sola tarjeta pro) + barra de acciones */}

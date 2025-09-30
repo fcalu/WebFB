@@ -93,6 +93,15 @@ def implied_single(odd: Optional[float]) -> Optional[float]:
     if odd <= 1e-9:
         return None
     return 1.0 / odd
+def p_over_xdot5(lam: float, xdot5: float) -> float:
+    """P(X >= floor(xdot5)+1) con X~Poisson(lam). Ej: xdot5=7.5 -> >=8."""
+    kmin = int(math.floor(xdot5)) + 1
+    return float(1.0 - poisson.cdf(kmin - 1, lam))
+
+def p_under_xdot5(lam: float, xdot5: float) -> float:
+    """P(X <= floor(xdot5)) con X~Poisson(lam). Ej: xdot5=4.5 -> <=4."""
+    kmax = int(math.floor(xdot5))
+    return float(poisson.cdf(kmax, lam))
 
 # --------------------------------------------------------------------------------------
 # Matrices de Poisson y (opcional) ajuste DC ligero
@@ -448,6 +457,23 @@ class ParlayOut(BaseModel):
     combined_ev: Optional[float] = None
     summary: str
     premium: bool = True
+# ====== Builder (selección compuesta) ======
+class BuilderIn(BaseModel):
+    league: str
+    home_team: str
+    away_team: str
+    odds: Optional[Dict[str, float]] = None  # opcional
+
+class BuilderLegOut(BaseModel):
+    market: str
+    selection: str
+    prob_pct: float
+
+class BuilderOut(BaseModel):
+    legs: List[BuilderLegOut]
+    combo_prob_pct: float
+    summary: str
+    debug: Optional[Dict[str, float]] = None
 
 def _leg_used_odd_for_pick(predict_out: PredictOut, odds: Optional[Dict[str,float]]) -> Optional[float]:
     """Busca la cuota que corresponde al pick seleccionado."""
@@ -615,7 +641,7 @@ def predict_core(store: LeagueStore, home: str, away: str, odds: Optional[Dict[s
         "away_win_pct": round(p2b * 100, 2),
         "over_2_5_pct": round(pob * 100, 2),
         "btts_pct": round(pbb * 100, 2),
-        "o25_mlp_pct": round(pob * 100, 2),  # compat front: no None
+        "o25_mlp_pct": round(pob * 100, 2),  # compat front
     }
 
     # Extras
@@ -626,13 +652,12 @@ def predict_core(store: LeagueStore, home: str, away: str, odds: Optional[Dict[s
         "top_scorelines": base["top_scorelines"],
     }
 
-    # Best pick (modo “valor” si hay cuotas; si no, el más probable)
+    # Best pick (valor si hay cuotas; si no, mayor prob)
     reasons = [
         f"λ_home={lam_h:.2f}, λ_away={lam_a:.2f} (Poisson{' + DC' if USE_DIXON_COLES else ''}).",
         f"Media goles liga={store.league_means['goals_per_game']:.2f}.",
     ]
 
-    # Candidatos por prob
     candidates = [
         ("1X2", "1", p1b, (odds or {}).get("1")),
         ("1X2", "X", pxb, (odds or {}).get("X")),
@@ -641,7 +666,6 @@ def predict_core(store: LeagueStore, home: str, away: str, odds: Optional[Dict[s
         ("BTTS", "Sí", pbb, (odds or {}).get("BTTS_YES")),
     ]
 
-    # Si hay cuotas, usa EV
     best_market, best_sel, best_prob = None, None, -1.0
     best_ev, best_edge, best_odd = None, None, None
 
@@ -659,12 +683,11 @@ def predict_core(store: LeagueStore, home: str, away: str, odds: Optional[Dict[s
                 edge = p - (pim if pim is not None else 0.0)
                 ranked.append((mk, sel, p, ev, edge, odd))
         if ranked:
-            ranked.sort(key=lambda x: (x[3], x[2]), reverse=True)  # EV, luego prob
+            ranked.sort(key=lambda x: (x[3], x[2]), reverse=True)
             mk, sel, p, ev, edge, odd = ranked[0]
             best_market, best_sel, best_prob = mk, sel, p
             best_ev, best_edge, best_odd = ev, edge, odd
             reasons.append(f"Mejor EV con cuota {odd:.2f}: EV={ev:+.2f}, edge={edge:+.2%}.")
-    # Si no hay odds, o ninguna con EV>0, toma mayor prob
     if best_market is None:
         candidates.sort(key=lambda x: x[2], reverse=True)
         mk, sel, p, odd = candidates[0]
@@ -687,7 +710,7 @@ def predict_core(store: LeagueStore, home: str, away: str, odds: Optional[Dict[s
         "averages": {
             "total_yellow_cards_avg": round(extras["total_yellow_cards_avg"], 2),
             "total_corners_avg": round(extras["total_corners_avg"], 2),
-            "corners_mlp_pred": round(extras["total_corners_avg"], 2),  # compat
+            "corners_mlp_pred": round(extras["total_corners_avg"], 2),
         },
         "best_pick": best,
         "summary": summary,
@@ -698,7 +721,7 @@ def predict_core(store: LeagueStore, home: str, away: str, odds: Optional[Dict[s
             "p_model": {"1": p1, "X": px, "2": p2, "O2_5": po, "BTTS": pb},
             "p_blend": {"1": p1b, "X": pxb, "2": p2b, "O2_5": pob, "BTTS": pbb},
             "odds": odds or {},
-            "market_impl": m1x2 | {"O2_5": mo25, "BTTS": mbtts} if m1x2 else {"O2_5": mo25, "BTTS": mbtts},
+            "market_impl": (m1x2 | {"O2_5": mo25, "BTTS": mbtts}) if m1x2 else {"O2_5": mo25, "BTTS": mbtts},
             "flags": {
                 "USE_DIXON_COLES": USE_DIXON_COLES,
                 "USE_CALIBRATION": USE_CALIBRATION,
@@ -763,3 +786,72 @@ def predict(inp: PredictIn, request: Request):
         debug=base.get("debug"),
     )
     return out
+
+from math import isfinite
+
+@app.post("/builder/suggest", response_model=BuilderOut)
+def builder_suggest(inp: BuilderIn):
+    if inp.league not in LEAGUES:
+        raise HTTPException(status_code=400, detail="Liga no encontrada")
+    if inp.home_team == inp.away_team:
+        raise HTTPException(status_code=400, detail="Equipos deben ser distintos")
+
+    # Reutiliza tu pipeline ya calibrado/blendeado
+    pred = predict_sync(PredictIn(
+        league=inp.league, home_team=inp.home_team, away_team=inp.away_team, odds=inp.odds
+    ))
+
+    # Probabilidades ya mezcladas (0..1)
+    p1  = pred.probs["home_win_pct"] / 100.0
+    px  = pred.probs["draw_pct"] / 100.0
+    po  = pred.probs["over_2_5_pct"] / 100.0
+    pb  = pred.probs["btts_pct"] / 100.0
+
+    p_1x = clamp01(p1 + px)
+
+    # Corners / Tarjetas desde medias
+    mu_corners = max(0.1, float(pred.averages.get("total_corners_avg", 9.0) or 9.0))
+    mu_cards   = max(0.1, float(pred.averages.get("total_yellow_cards_avg", 4.0) or 4.0))
+
+    p_corners_over_7_5 = p_over_xdot5(mu_corners, 7.5)  # >=8
+    p_cards_under_4_5  = p_under_xdot5(mu_cards, 4.5)   # <=4
+
+    # Sanitiza
+    for k, v in {
+        "p_1x": p_1x,
+        "p_corners_over_7_5": p_corners_over_7_5,
+        "p_cards_under_4_5": p_cards_under_4_5,
+        "p_btts": pb,
+        "p_over25": po,
+    }.items():
+        if not isfinite(v):
+            raise HTTPException(status_code=500, detail=f"Probabilidad inválida en {k}")
+
+    legs = [
+        BuilderLegOut(market="Doble oportunidad", selection="1X (Local o Empate)", prob_pct=round(p_1x*100, 2)),
+        BuilderLegOut(market="Córners",           selection="Más de 7.5",           prob_pct=round(p_corners_over_7_5*100, 2)),
+        BuilderLegOut(market="Tarjetas",          selection="Menos de 4.5",         prob_pct=round(p_cards_under_4_5*100, 2)),
+        BuilderLegOut(market="BTTS",              selection="Sí",                   prob_pct=round(pb*100, 2)),
+        BuilderLegOut(market="Goles",             selection="Más de 2.5",           prob_pct=round(po*100, 2)),
+    ]
+
+    combo = clamp01(p_1x * p_corners_over_7_5 * p_cards_under_4_5 * pb * po)
+    combo_pct = round(combo * 100, 2)
+
+    summary = (
+        f"{inp.home_team} vs {inp.away_team}. Selección sugerida: "
+        f"1X + Over 7.5 córners + Under 4.5 tarjetas + BTTS Sí + Over 2.5 "
+        f"(prob. combinada ~ {combo_pct}%)."
+    )
+
+    return BuilderOut(
+        legs=legs,
+        combo_prob_pct=combo_pct,
+        summary=summary,
+        debug={
+            "mu_corners": round(mu_corners, 2),
+            "mu_cards": round(mu_cards, 2),
+            "lambda_home": pred.poisson.get("home_lambda", None),
+            "lambda_away": pred.poisson.get("away_lambda", None),
+        }
+    )
