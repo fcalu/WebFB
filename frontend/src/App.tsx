@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import BestPickPro from "./components/BestPickPro";
 import ErrorBoundary from "./components/ErrorBoundary";
-
+import ParlayDrawer from "./components/ParlayDrawer";
 /* ===== Tipos mínimos ===== */
 type ApiLeagues = { leagues: string[] };
 type ApiTeams = { teams: string[] };
@@ -266,6 +266,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [data, setData] = useState<PredictResponse | null>(null);
+  const [parlayOpen, setParlayOpen] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/leagues`)
@@ -341,7 +342,11 @@ export default function App() {
 
       <div style={wrap}>
         <Header />
-
+          <button
+          onClick={() => setParlayOpen(true)}
+          title="Generador de Parley"
+          style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 14px", borderRadius:12, border:"1px solid rgba(255,255,255,.12)", color:"#d1d5db", background:"rgba(255,255,255,.06)" }}
+        >☰ Parley</button>
         {/* Paso 1: Selección */}
         <div style={{ ...panel }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -436,7 +441,7 @@ export default function App() {
             <SkeletonCard />
           </div>
         )}
-
+        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} API_BASE={API_BASE} isPremium={true /* o tu flag real */} />
         {/* Resultado (UNA sola tarjeta pro) */}
         {data && !loading && (
           <div style={{ marginTop: 12 }}>

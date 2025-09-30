@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from scipy.stats import poisson
-
+from pydantic import BaseModel, Field
 # (Opcional) calibración Platt con sklearn; si no está, seguimos sin calibrar
 try:
     from sklearn.linear_model import LogisticRegression
@@ -420,7 +420,114 @@ class PredictOut(BaseModel):
     best_pick: BestPick
     summary: str
     debug: Optional[Dict[str, object]] = None
+class ParlayLegIn(BaseModel):
+    league: str
+    home_team: str
+    away_team: str
+    odds: Optional[Dict[str, float]] = None  # opcional
 
+class ParlayIn(BaseModel):
+    legs: List[ParlayLegIn] = Field(default_factory=list)
+    mode: Optional[str] = "value"  # o "prob", por si luego lo usas
+
+class ParlayLegOut(BaseModel):
+    league: str
+    home_team: str
+    away_team: str
+    pick: BestPick
+    probs: Dict[str, float]       # los probs del partido
+    used_odd: Optional[float] = None
+    fair_prob_pct: float          # = pick.prob_pct (comodidad)
+    ev: Optional[float] = None
+
+class ParlayOut(BaseModel):
+    legs: List[ParlayLegOut]
+    combined_prob_pct: float
+    combined_fair_odds: float
+    combined_used_odds: Optional[float] = None
+    combined_ev: Optional[float] = None
+    summary: str
+    premium: bool = True
+
+def _leg_used_odd_for_pick(predict_out: PredictOut, odds: Optional[Dict[str,float]]) -> Optional[float]:
+    """Busca la cuota que corresponde al pick seleccionado."""
+    if not odds:
+        return None
+    m = predict_out.best_pick.market
+    s = predict_out.best_pick.selection
+    # Mapeos básicos (ajusta si agregas más mercados)
+    if m == "1X2":
+        if s == "1": return float(odds.get("1", 0) or 0) or None
+        if s == "X": return float(odds.get("X", 0) or 0) or None
+        if s == "2": return float(odds.get("2", 0) or 0) or None
+    if m == "Over 2.5" and s == "Sí":
+        return float(odds.get("O2_5", 0) or 0) or None
+    if m == "BTTS" and s == "Sí":
+        return float(odds.get("BTTS_YES", 0) or 0) or None
+    return None
+
+@app.post("/parlay/suggest", response_model=ParlayOut)
+def parlay_suggest(inp: ParlayIn):
+    if not inp.legs or len(inp.legs) == 0:
+        raise HTTPException(status_code=400, detail="Debes enviar 1..4 partidos")
+
+    legs_out: List[ParlayLegOut] = []
+    probs01: List[float] = []
+    used_odds: List[float] = []
+
+    for L in inp.legs[:4]:
+        # Reutilizamos tu predicción
+        pred = predict(PredictIn(league=L.league, home_team=L.home_team, away_team=L.away_team, odds=L.odds))
+        p01 = (pred.best_pick.prob_pct or 0.0) / 100.0
+        probs01.append(p01)
+
+        uo = _leg_used_odd_for_pick(pred, L.odds)
+        if uo and uo > 1.0:
+            used_odds.append(uo)
+
+        ev_leg = (p01 * uo - 1.0) if uo and uo > 1.0 else None
+
+        legs_out.append(ParlayLegOut(
+            league=L.league,
+            home_team=L.home_team,
+            away_team=L.away_team,
+            pick=pred.best_pick,
+            probs=pred.probs,
+            used_odd=uo,
+            fair_prob_pct=pred.best_pick.prob_pct,
+            ev=ev_leg
+        ))
+
+    # Combinados (asumiendo independencia aprox.)
+    import math
+    prod_prob = 1.0
+    for p in probs01:
+        prod_prob *= max(0.0, min(1.0, p))
+
+    combined_prob_pct = round(prod_prob * 100, 2)
+    combined_fair_odds = float("inf") if prod_prob <= 0 else round(1.0 / prod_prob, 2)
+
+    combined_used_odds = None
+    combined_ev = None
+    if used_odds and len(used_odds) == len(probs01):
+        # Cuota total = producto de cuotas leg
+        from functools import reduce
+        import operator
+        total_odds = reduce(operator.mul, used_odds, 1.0)
+        combined_used_odds = round(total_odds, 2)
+        combined_ev = round(total_odds * prod_prob - 1.0, 4)
+
+    summary = f"Parley de {len(legs_out)} selecciones. Prob. combinada {combined_prob_pct}%, cuota justa {combined_fair_odds}."
+
+    return ParlayOut(
+        legs=legs_out,
+        combined_prob_pct=combined_prob_pct,
+        combined_fair_odds=combined_fair_odds,
+        combined_used_odds=combined_used_odds,
+        combined_ev=combined_ev,
+        summary=summary,
+        premium=True,
+    )
 # --------------------------------------------------------------------------------------
 # Núcleo de predicción (mejorado pero backward-compatible)
 # --------------------------------------------------------------------------------------
