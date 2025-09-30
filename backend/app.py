@@ -466,6 +466,45 @@ def _leg_used_odd_for_pick(predict_out: PredictOut, odds: Optional[Dict[str,floa
         return float(odds.get("BTTS_YES", 0) or 0) or None
     return None
 
+def predict_sync(inp: PredictIn) -> PredictOut:
+    """Versión síncrona de predict() para usar internamente (p. ej. en parlay),
+    sin el parámetro Request."""
+    if inp.league not in LEAGUES:
+        raise HTTPException(status_code=400, detail="Liga no encontrada")
+    store = LEAGUES[inp.league]
+
+    home = inp.home_team
+    away = inp.away_team
+    if home == away:
+        raise HTTPException(status_code=400, detail="Equipos deben ser distintos")
+
+    # Cache por partido + cuotas
+    key = cache_key(inp.league, home, away, inp.odds)
+    cached = cache_get(key)
+    if USE_CACHED_RATINGS and cached:
+        base = cached
+    else:
+        try:
+            base = predict_core(store, home, away, inp.odds)
+        except KeyError:
+            raise HTTPException(status_code=400, detail="Equipo no encontrado en esta liga")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error interno: {e}")
+        cache_set(key, base)
+
+    return PredictOut(
+        league=inp.league,
+        home_team=home,
+        away_team=away,
+        probs=base["probs"],
+        poisson=base["poisson"],
+        averages=base["averages"],
+        best_pick=base["best_pick"],
+        summary=base["summary"],
+        debug=base.get("debug"),
+    )
+
+
 @app.post("/parlay/suggest", response_model=ParlayOut)
 def parlay_suggest(inp: ParlayIn):
     if not inp.legs or len(inp.legs) == 0:
@@ -477,7 +516,7 @@ def parlay_suggest(inp: ParlayIn):
 
     for L in inp.legs[:4]:
         # Reutilizamos tu predicción
-        pred = predict(PredictIn(league=L.league, home_team=L.home_team, away_team=L.away_team, odds=L.odds))
+        pred = predict_sync(PredictIn(league=L.league, home_team=L.home_team, away_team=L.away_team, odds=L.odds))
         p01 = (pred.best_pick.prob_pct or 0.0) / 100.0
         probs01.append(p01)
 
