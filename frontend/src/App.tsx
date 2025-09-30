@@ -3,6 +3,7 @@ import BestPickPro from "./components/BestPickPro";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ParlayDrawer from "./components/ParlayDrawer";
 import BuilderDrawer from "./components/BuilderDrawer";
+import NavDrawer from "./components/NavDrawer";
 
 
 // NUEVO: módulos de stake/historial
@@ -129,11 +130,14 @@ const pill: React.CSSProperties = {
 };
 
 /* ===== Cabecera minimal ===== */
+/* ===== Cabecera con hamburguesa ===== */
 function Header({
+  onOpenMenu,
   onOpenHistory,
   onOpenParlay,
   onOpenBuilder,
 }: {
+  onOpenMenu: () => void;
   onOpenHistory: () => void;
   onOpenParlay: () => void;
   onOpenBuilder: () => void;
@@ -148,7 +152,31 @@ function Header({
         marginBottom: 12,
       }}
     >
+      {/* Lado izquierdo: Hamburguesa + marca */}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          aria-label="Abrir menú"
+          onClick={onOpenMenu}
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.12)",
+            background: "rgba(255,255,255,.06)",
+            color: "#e5e7eb",
+            display: "grid",
+            placeItems: "center",
+            cursor: "pointer",
+          }}
+        >
+          {/* ícono hamburguesa simple */}
+          <div style={{ display: "grid", gap: 4 }}>
+            <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
+            <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
+            <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
+          </div>
+        </button>
+
         <div
           style={{
             width: 46,
@@ -168,13 +196,28 @@ function Header({
           <div style={{ fontSize: 22, fontWeight: 900, lineHeight: 1 }}>
             FootyMines · IA Predictor
           </div>
-          <div style={{ opacity: 0.8, fontSize: 13 }}>
-            Predicción clara para usuarios finales
-          </div>
+          <div style={{ opacity: 0.8, fontSize: 13 }}>Predicción clara para usuarios finales</div>
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8 }}>
+      {/* Acciones rápidas (ocultas en móvil) */}
+      <div className="quick-actions" style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={onOpenBuilder}
+          title="Generador de selección"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.12)",
+            color: "#d1d5db",
+            background: "rgba(255,255,255,.06)",
+          }}
+        >
+          🎯 Selección
+        </button>
         <button
           onClick={onOpenHistory}
           title="Historial de apuestas"
@@ -205,23 +248,7 @@ function Header({
             background: "rgba(255,255,255,.06)",
           }}
         >
-          ☰ Parley
-        </button>
-        <button
-          onClick={onOpenBuilder}
-          title="Generador de selección"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.12)",
-            color: "#d1d5db",
-            background: "rgba(255,255,255,.06)",
-          }}
-        >
-          🎯 Selección
+          🧮 Parley
         </button>
       </div>
     </div>
@@ -339,7 +366,8 @@ export default function App() {
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [stakeOpen, setStakeOpen] = useState(false);
-   const [builderOpen, setBuilderOpen] = useState(false);
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
 
 
   useEffect(() => {
@@ -445,6 +473,7 @@ export default function App() {
       <style>{`
         @media (max-width: 720px) {
           .g3 { display:grid; grid-template-columns: 1fr; gap:12px; }
+          .quick-actions { display: none !important; }
         }
         @media (min-width: 721px) {
           .g3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; }
@@ -457,8 +486,10 @@ export default function App() {
         }
       `}</style>
 
+
       <div style={wrap}>
         <Header
+          onOpenMenu={() => setNavOpen(true)}
           onOpenHistory={() => setHistOpen(true)}
           onOpenParlay={() => setParlayOpen(true)}
           onOpenBuilder={() => setBuilderOpen(true)}
@@ -564,7 +595,13 @@ export default function App() {
             <SkeletonCard />
           </div>
         )}
-
+        <NavDrawer
+          open={navOpen}
+          onClose={() => setNavOpen(false)}
+          onOpenParlay={() => setParlayOpen(true)}
+          onOpenBuilder={() => setBuilderOpen(true)}
+          onOpenHistory={() => setHistOpen(true)}
+        />
         {/* Parley & Historial (sliders) */}
         <ParlayDrawer
           open={parlayOpen}
