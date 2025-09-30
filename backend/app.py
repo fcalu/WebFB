@@ -93,15 +93,6 @@ def implied_single(odd: Optional[float]) -> Optional[float]:
     if odd <= 1e-9:
         return None
     return 1.0 / odd
-def p_over_xdot5(lam: float, xdot5: float) -> float:
-    """P(X >= floor(xdot5)+1) con X~Poisson(lam). Ej: xdot5=7.5 -> >=8."""
-    kmin = int(math.floor(xdot5)) + 1
-    return float(1.0 - poisson.cdf(kmin - 1, lam))
-
-def p_under_xdot5(lam: float, xdot5: float) -> float:
-    """P(X <= floor(xdot5)) con X~Poisson(lam). Ej: xdot5=4.5 -> <=4."""
-    kmax = int(math.floor(xdot5))
-    return float(poisson.cdf(kmax, lam))
 
 # --------------------------------------------------------------------------------------
 # Matrices de Poisson y (opcional) ajuste DC ligero
@@ -115,6 +106,16 @@ def poisson_matrix(lh: float, la: float, kmax: int = POISSON_MAX_GOALS) -> np.nd
     M = ph @ pa
     M = M / M.sum()
     return M
+def p_over_xdot5(lam: float, xdot5: float) -> float:
+    """P(X >= floor(xdot5)+1) con X~Poisson(lam). Ej: xdot5=7.5 -> >=8."""
+    kmin = int(math.floor(xdot5)) + 1
+    return float(1.0 - poisson.cdf(kmin - 1, lam))
+
+def p_under_xdot5(lam: float, xdot5: float) -> float:
+    """P(X <= floor(xdot5)) con X~Poisson(lam). Ej: xdot5=4.5 -> <=4."""
+    kmax = int(math.floor(xdot5))
+    return float(poisson.cdf(kmax, lam))
+
 
 def dixon_coles_soft(M: np.ndarray, rho: float) -> np.ndarray:
     """
@@ -787,71 +788,148 @@ def predict(inp: PredictIn, request: Request):
     )
     return out
 
-from math import isfinite
+# ===== Builder V2 (selección compuesta creíble) =====
+from math import floor
+
+def _p_over_xdot5(lam: float, xdot5: float) -> float:
+    """P(X >= floor(xdot5)+1) con X~Poisson(lam). Ej: xdot5=7.5 -> >=8."""
+    kmin = int(floor(xdot5)) + 1
+    return float(1.0 - poisson.cdf(kmin - 1, lam))
+
+def _p_under_xdot5(lam: float, xdot5: float) -> float:
+    """P(X <= floor(xdot5)) con X~Poisson(lam). Ej: xdot5=4.5 -> <=4."""
+    kmax = int(floor(xdot5))
+    return float(poisson.cdf(kmax, lam))
 
 @app.post("/builder/suggest", response_model=BuilderOut)
 def builder_suggest(inp: BuilderIn):
-    if inp.league not in LEAGUES:
-        raise HTTPException(status_code=400, detail="Liga no encontrada")
-    if inp.home_team == inp.away_team:
-        raise HTTPException(status_code=400, detail="Equipos deben ser distintos")
-
-    # Reutiliza tu pipeline ya calibrado/blendeado
+    # Reutiliza las probabilidades ya calibradas/mezcladas del core
     pred = predict_sync(PredictIn(
         league=inp.league, home_team=inp.home_team, away_team=inp.away_team, odds=inp.odds
     ))
 
-    # Probabilidades ya mezcladas (0..1)
+    # --- Probabilidades ya blendeadas ---
     p1  = pred.probs["home_win_pct"] / 100.0
     px  = pred.probs["draw_pct"] / 100.0
-    po  = pred.probs["over_2_5_pct"] / 100.0
-    pb  = pred.probs["btts_pct"] / 100.0
+    p2  = pred.probs["away_win_pct"] / 100.0
+    po25 = pred.probs["over_2_5_pct"] / 100.0
+    pbtts = pred.probs["btts_pct"] / 100.0
 
-    p_1x = clamp01(p1 + px)
+    p1x = clamp01(p1 + px)
 
-    # Corners / Tarjetas desde medias
-    mu_corners = max(0.1, float(pred.averages.get("total_corners_avg", 9.0) or 9.0))
-    mu_cards   = max(0.1, float(pred.averages.get("total_yellow_cards_avg", 4.0) or 4.0))
+    # Lambdas de goles
+    lam_h = float(pred.poisson.get("home_lambda", 1.1) or 1.1)
+    lam_a = float(pred.poisson.get("away_lambda", 1.1) or 1.1)
+    lam_sum = lam_h + lam_a
 
-    p_corners_over_7_5 = p_over_xdot5(mu_corners, 7.5)  # >=8
-    p_cards_under_4_5  = p_under_xdot5(mu_cards, 4.5)   # <=4
+    # Medias para córners y tarjetas
+    lam_corners = float(pred.averages.get("total_corners_avg", 9.0) or 9.0)
+    lam_cards   = float(pred.averages.get("total_yellow_cards_avg", 4.5) or 4.5)
 
-    # Sanitiza
-    for k, v in {
-        "p_1x": p_1x,
-        "p_corners_over_7_5": p_corners_over_7_5,
-        "p_cards_under_4_5": p_cards_under_4_5,
-        "p_btts": pb,
-        "p_over25": po,
-    }.items():
-        if not isfinite(v):
-            raise HTTPException(status_code=500, detail=f"Probabilidad inválida en {k}")
+    picks: List[BuilderLegOut] = []
+    flags = {"has_over": False, "has_btts": False, "has_1x2": False}
 
-    legs = [
-        BuilderLegOut(market="Doble oportunidad", selection="1X (Local o Empate)", prob_pct=round(p_1x*100, 2)),
-        BuilderLegOut(market="Córners",           selection="Más de 7.5",           prob_pct=round(p_corners_over_7_5*100, 2)),
-        BuilderLegOut(market="Tarjetas",          selection="Menos de 4.5",         prob_pct=round(p_cards_under_4_5*100, 2)),
-        BuilderLegOut(market="BTTS",              selection="Sí",                   prob_pct=round(pb*100, 2)),
-        BuilderLegOut(market="Goles",             selection="Más de 2.5",           prob_pct=round(po*100, 2)),
-    ]
+    # ---- 1) 1X2/Doble oportunidad ----
+    if p1 >= 0.62:
+        picks.append(BuilderLegOut(market="Ganador", selection="Gana Local", prob_pct=round(p1*100,2)))
+        flags["has_1x2"] = True
+    elif p2 >= 0.62:
+        picks.append(BuilderLegOut(market="Ganador", selection="Gana Visitante", prob_pct=round(p2*100,2)))
+        flags["has_1x2"] = True
+    elif p1x >= 0.58:
+        picks.append(BuilderLegOut(market="Doble oportunidad", selection="1X (Local o Empate)", prob_pct=round(p1x*100,2)))
+        flags["has_1x2"] = True
+    # si ninguna puerta pasa, no agregamos pick 1x2
 
-    combo = clamp01(p_1x * p_corners_over_7_5 * p_cards_under_4_5 * pb * po)
-    combo_pct = round(combo * 100, 2)
+    # ---- 2) BTTS ----
+    if pbtts >= 0.58 and lam_h >= 0.85 and lam_a >= 0.85:
+        picks.append(BuilderLegOut(market="BTTS", selection="Sí", prob_pct=round(pbtts*100,2)))
+        flags["has_btts"] = True
 
-    summary = (
-        f"{inp.home_team} vs {inp.away_team}. Selección sugerida: "
-        f"1X + Over 7.5 córners + Under 4.5 tarjetas + BTTS Sí + Over 2.5 "
-        f"(prob. combinada ~ {combo_pct}%)."
-    )
+    # ---- 3) Goles (Over 2.5 o Under 3.5) ----
+    added_goals = False
+    if po25 >= 0.60 and lam_sum >= 2.5:
+        picks.append(BuilderLegOut(market="Goles", selection="Más de 2.5", prob_pct=round(po25*100,2)))
+        flags["has_over"] = True
+        added_goals = True
+    else:
+        # Under 3.5 si pinta cerrado
+        p_u35 = p_under_xdot5(lam_sum, 3.5)  # <=3 goles
+        if p_u35 >= 0.59 and lam_sum <= 2.4:
+            picks.append(BuilderLegOut(market="Goles", selection="Menos de 3.5", prob_pct=round(p_u35*100,2)))
+            added_goals = True
+    # si no hay nada sólido en goles, omitimos
+
+    # ---- 4) Córners (elige la línea MÁS alta que cruce 60%) ----
+    best_corners = None
+    for line in [9.5, 8.5, 7.5]:  # probamos de alta a baja; elegimos la primera que pase
+        p_over = p_over_xdot5(lam_corners, line)
+        if p_over >= 0.60:
+            best_corners = (line, p_over)
+            break
+    if best_corners:
+        line, p_over = best_corners
+        picks.append(BuilderLegOut(market="Córners", selection=f"Más de {line}", prob_pct=round(p_over*100,2)))
+
+    # ---- 5) Tarjetas (preferencia: Under si λ bajo, Over si λ alto) ----
+    best_cards = None
+    # candidatos bajo/over típicos
+    cands = []
+    cands.append(("Menos de 4.5", p_under_xdot5(lam_cards, 4.5)))
+    cands.append(("Menos de 5.5", p_under_xdot5(lam_cards, 5.5)))
+    cands.append(("Más de 3.5", 1.0 - p_under_xdot5(lam_cards, 3.5)))
+    cands.append(("Más de 4.5", 1.0 - p_under_xdot5(lam_cards, 4.5)))
+    # orden preferente según λ
+    if lam_cards <= 4.8:
+        # under-friendly: priorizamos los under
+        cands.sort(key=lambda x: (("Menos" not in x[0]), -x[1]))  # under primero, luego prob desc
+    else:
+        # over-friendly
+        cands.sort(key=lambda x: (("Más" not in x[0]), -x[1]))    # over primero
+    for sel, p in cands:
+        if p >= 0.60:
+            best_cards = (sel, p)
+            break
+    if best_cards:
+        sel, p = best_cards
+        picks.append(BuilderLegOut(market="Tarjetas", selection=sel, prob_pct=round(p*100,2)))
+
+    # ---- Selecciona como máximo 3 picks, priorizando probabilidad ----
+    if len(picks) > 3:
+        picks.sort(key=lambda x: x.prob_pct, reverse=True)
+        picks = picks[:3]
+
+    # ---- Probabilidad combinada con recortes por correlación ----
+    probs01 = [min(0.99, max(0.01, p.prob_pct/100.0)) for p in picks]
+    prod = 1.0
+    for p in probs01:
+        prod *= p
+
+    k = len(probs01)
+    prod_adj = prod * (0.92 ** max(0, k-1))  # penalización general por múltiples
+
+    has_over = any(p.market=="Goles" and "Más de 2.5" in p.selection for p in picks)
+    has_btts = any(p.market=="BTTS" and "Sí" in p.selection for p in picks)
+    has_1x2  = any(p.market in ("Ganador","Doble oportunidad") for p in picks)
+
+    if has_over and has_btts:
+        prod_adj *= 0.88  # correlación fuerte
+    if has_1x2 and has_over:
+        prod_adj *= 0.95  # algo correlacionados
+
+    prod_adj = clamp01(prod_adj)
+
+    combo_pct = round(prod_adj * 100.0, 2)
+    fair_odds = float("inf") if prod_adj <= 0 else round(1.0 / prod_adj, 2)
+
+    # Resumen legible
+    nice = ", ".join([f"{p.market}: {p.selection}" for p in picks]) or "—"
+    summary = (f"Selección combinada para {inp.home_team} vs {inp.away_team}: "
+               f"{combo_pct}% (cuota justa {fair_odds}). {nice}")
 
     return BuilderOut(
-        legs=legs,
+        legs=picks,
         combo_prob_pct=combo_pct,
         summary=summary,
-        debug={
-            "mu_corners": round(mu_corners, 2),
-            "mu_cards": round(mu_cards, 2),
-            "lambda_home": pred.poisson.get("home_lambda", None),
-            "lambda_away": pred.poisson.get("away_lambda", None),
-        }
+        debug=None
     )

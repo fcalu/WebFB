@@ -1,6 +1,6 @@
 // src/components/BuilderDrawer.tsx
 import { useEffect, useMemo, useState } from "react";
-
+import TicketCard from "./TicketCard";
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -163,7 +163,15 @@ export default function BuilderDrawer({
       setLoading(false);
     }
   }
-
+  {result?.legs?.map((leg, i) => (
+  <div key={i} style={{ marginTop: 8 }}>
+    <TicketCard
+      title={leg.market}
+      subtitle={leg.selection}
+      probPct={leg.prob_pct}
+    />
+  </div>
+))}
   if (!open) return null;
 
   return (
@@ -221,7 +229,21 @@ export default function BuilderDrawer({
             </datalist>
           </div>
         </div>
-
+        <div style={{
+            marginTop: 12,
+            background: "rgba(255,255,255,.06)",
+            border: "1px solid rgba(255,255,255,.12)",
+            borderRadius: 12,
+            padding: 14
+            }}>
+            <div style={{ fontWeight: 900 }}>Probabilidad combinada</div>
+            <div style={{ marginTop: 6, fontSize: 18, fontWeight: 900 }}>
+                {result?.combo_prob_pct?.toFixed(2)}%
+            </div>
+            <div style={{ opacity: .9, marginTop: 4 }}>
+                {result?.summary}
+            </div>
+            </div>
         {/* Actions */}
         <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14 }}>
           <button
