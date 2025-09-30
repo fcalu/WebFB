@@ -1,60 +1,51 @@
 // src/components/BuilderDrawer.tsx
-import { useEffect, useState } from "react";
-
-type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
+import { useEffect, useMemo, useState } from "react";
 
 type Props = {
   open: boolean;
   onClose: () => void;
   API_BASE: string;
-  league?: string;
-  home?: string;
-  away?: string;
-  odds?: Odds; // se enviarán si existen (no es obligatorio)
+  league: string;
+  home: string;
+  away: string;
+  odds?: Record<string, number | undefined>;
 };
 
-type BuilderPick = { text: string; prob_pct: number };
-type BuilderOut = {
-  picks: BuilderPick[];
-  combined_prob_pct: number;
-  combined_fair_odds: number;
-  summary: string;
-};
+type ApiLeagues = { leagues: string[] };
+type ApiTeams = { teams: string[] };
 
-const overlay: React.CSSProperties = {
+type BuilderLeg = { market: string; selection: string; prob_pct: number };
+type BuilderOut = { legs: BuilderLeg[]; combo_prob_pct: number; summary: string };
+
+const sheet: React.CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,.4)",
-  backdropFilter: "blur(2px)",
-  zIndex: 50,
-};
-
-const drawer: React.CSSProperties = {
-  position: "fixed",
-  top: 0,
-  right: 0,
-  height: "100%",
-  width: "min(520px, 100vw)",
-  background: "rgba(17,24,39,.98)",
-  color: "#e5e7eb",
-  borderLeft: "1px solid rgba(255,255,255,.15)",
-  zIndex: 51,
+  background: "rgba(0,0,0,.55)",
+  backdropFilter: "blur(4px)",
   display: "flex",
-  flexDirection: "column",
+  justifyContent: "center",
+  alignItems: "flex-start",
+  paddingTop: 24,
+  zIndex: 60,
 };
 
-const header: React.CSSProperties = {
-  padding: "12px 14px",
-  borderBottom: "1px solid rgba(255,255,255,.12)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 8,
-};
-
-const body: React.CSSProperties = {
-  padding: 14,
+const card: React.CSSProperties = {
+  width: "min(920px, 96vw)",
+  maxHeight: "88vh",
   overflow: "auto",
+  background: "rgba(17,24,39,.95)",
+  border: "1px solid rgba(255,255,255,.12)",
+  borderRadius: 16,
+  padding: 18,
+  color: "#e5e7eb",
+};
+
+const label: React.CSSProperties = {
+  color: "#a5b4fc",
+  fontSize: 12,
+  marginBottom: 6,
+  fontWeight: 800,
+  letterSpacing: 0.3,
 };
 
 const input: React.CSSProperties = {
@@ -67,74 +58,97 @@ const input: React.CSSProperties = {
   outline: "none",
 };
 
-const label: React.CSSProperties = {
-  color: "#a5b4fc",
-  fontSize: 12,
-  marginBottom: 6,
-  fontWeight: 800,
-  letterSpacing: 0.3,
-};
-
-const btn: React.CSSProperties = {
-  background: "linear-gradient(135deg, #7c3aed, #5b21b6)",
-  color: "white",
-  border: "none",
-  borderRadius: 14,
-  padding: "12px 16px",
-  fontWeight: 900,
-  cursor: "pointer",
-};
-
 const pill: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
-  padding: "6px 10px",
-  borderRadius: 999,
-  background: "rgba(255,255,255,.06)",
-  border: "1px solid rgba(255,255,255,.10)",
+  padding: "10px 14px",
+  borderRadius: 12,
+  border: "1px solid rgba(255,255,255,.12)",
   color: "#d1d5db",
-  fontSize: 12,
-  whiteSpace: "nowrap",
+  background: "rgba(255,255,255,.06)",
+};
+
+const btnPrimary: React.CSSProperties = {
+  background: "linear-gradient(135deg, #7c3aed, #5b21b6)",
+  color: "white",
+  border: "none",
+  borderRadius: 14,
+  padding: "14px 18px",
+  fontWeight: 900,
+  fontSize: 16,
 };
 
 export default function BuilderDrawer({
   open,
   onClose,
   API_BASE,
-  league: leagueProp,
-  home: homeProp,
-  away: awayProp,
+  league,
+  home,
+  away,
   odds,
 }: Props) {
-  const [league, setLeague] = useState(leagueProp ?? "");
-  const [home, setHome] = useState(homeProp ?? "");
-  const [away, setAway] = useState(awayProp ?? "");
+  const [leagues, setLeagues] = useState<string[]>([]);
+  const [teams, setTeams] = useState<string[]>([]);
+
+  const [selLeague, setSelLeague] = useState(league || "");
+  const [selHome, setSelHome] = useState(home || "");
+  const [selAway, setSelAway] = useState(away || "");
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [result, setResult] = useState<BuilderOut | null>(null);
 
+  // Al abrir, precargar listas y seed con lo que viene de props
   useEffect(() => {
-    if (open) {
-      setLeague(leagueProp ?? "");
-      setHome(homeProp ?? "");
-      setAway(awayProp ?? "");
-      setErr("");
-      setResult(null);
-    }
-  }, [open, leagueProp, homeProp, awayProp]);
+    if (!open) return;
+    setSelLeague(league || "");
+    setSelHome(home || "");
+    setSelAway(away || "");
+    setResult(null);
+    setErr("");
 
-  const canGenerate = league && home && away && home !== away;
+    // Carga ligas
+    fetch(`${API_BASE}/leagues`)
+      .then((r) => r.json())
+      .then((d: ApiLeagues) => setLeagues(d.leagues ?? []))
+      .catch(() => setLeagues([]));
+  }, [open, API_BASE, league, home, away]);
 
-  async function onGenerate() {
-    if (!canGenerate || loading) return;
+  // Cuando cambia la liga, cargar equipos
+  useEffect(() => {
+    setTeams([]);
+    if (!selLeague) return;
+    fetch(`${API_BASE}/teams?league=${encodeURIComponent(selLeague)}`)
+      .then((r) => r.json())
+      .then((d: ApiTeams) => setTeams(d.teams ?? []))
+      .catch(() => setTeams([]));
+  }, [selLeague, API_BASE]);
+
+  const canBuild = selLeague && selHome && selAway && selHome !== selAway;
+
+  const filteredHome = useMemo(
+    () => teams.filter((t) => t.toLowerCase().includes(selHome.toLowerCase())),
+    [teams, selHome]
+  );
+  const filteredAway = useMemo(
+    () => teams.filter((t) => t.toLowerCase().includes(selAway.toLowerCase())),
+    [teams, selAway]
+  );
+
+  async function onBuild() {
+    if (!canBuild) return;
     setLoading(true);
     setErr("");
     setResult(null);
-
     try {
-      // <<<<<<<<<<<<<<<<<<<<<<<<<<<< AQUÍ va el fetch >>>>>>>>>>>>>>>>>>>>>>>>>>>>
-      const body = { league, home_team: home, away_team: away, odds };
+      const body: any = {
+        league: selLeague,
+        home_team: selHome,
+        away_team: selAway,
+      };
+      if (odds && Object.keys(odds).length) body.odds = odds;
+
       const res = await fetch(`${API_BASE}/builder/suggest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,7 +158,7 @@ export default function BuilderDrawer({
       const json: BuilderOut = await res.json();
       setResult(json);
     } catch (e: any) {
-      setErr(e?.message || "Error al generar la selección.");
+      setErr(e?.message || "No pude generar la selección.");
     } finally {
       setLoading(false);
     }
@@ -153,103 +167,113 @@ export default function BuilderDrawer({
   if (!open) return null;
 
   return (
-    <>
-      <div style={overlay} onClick={onClose} />
-      <div style={drawer}>
-        <div style={header}>
-          <div style={{ fontWeight: 900, fontSize: 18 }}>🎯 Generador de selección</div>
-          <button onClick={onClose} style={{ ...pill, cursor: "pointer" }}>Cerrar ✕</button>
+    <div style={sheet} onClick={onClose}>
+      <div style={card} onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 20, fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}>
+            🎯 Generador de selección
+          </div>
+          <button onClick={onClose} style={pill}>Cerrar ✕</button>
         </div>
 
-        <div style={body}>
-          <div style={{ display: "grid", gap: 10 }}>
-            <div>
-              <div style={label}>Liga</div>
-              <input
-                style={input}
-                placeholder="Ej: La Liga / Premier League / ChampionsLegue"
-                value={league}
-                onChange={(e) => setLeague(e.target.value)}
-              />
-            </div>
-            <div>
-              <div style={label}>Equipo local</div>
-              <input
-                style={input}
-                placeholder="Local"
-                value={home}
-                onChange={(e) => setHome(e.target.value)}
-              />
-            </div>
-            <div>
-              <div style={label}>Equipo visitante</div>
-              <input
-                style={input}
-                placeholder="Visitante"
-                value={away}
-                onChange={(e) => setAway(e.target.value)}
-              />
-            </div>
+        {/* Form */}
+        <div style={{ display: "grid", gap: 12 }}>
+          <div>
+            <div style={label}>Liga</div>
+            <select
+              value={selLeague}
+              onChange={(e) => setSelLeague(e.target.value)}
+              style={input}
+            >
+              <option value="">— Selecciona liga —</option>
+              {leagues.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
           </div>
 
-          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <button
-              onClick={onGenerate}
-              disabled={!canGenerate || loading}
-              style={{ ...btn, opacity: !canGenerate || loading ? 0.6 : 1 }}
-            >
-              {loading ? "Generando…" : "Generar selección"}
-            </button>
-            {odds && <div style={pill}>Usando cuotas del partido (si existen)</div>}
+          <div>
+            <div style={label}>Equipo local</div>
+            <input
+              style={input}
+              list="builder_home_list"
+              value={selHome}
+              onChange={(e) => setSelHome(e.target.value)}
+              placeholder="Local"
+            />
+            <datalist id="builder_home_list">
+              {filteredHome.map((t) => <option key={t} value={t} />)}
+            </datalist>
           </div>
 
-          {err && (
-            <div
-              style={{
-                background: "rgba(239,68,68,.12)",
-                border: "1px solid rgba(239,68,68,.35)",
-                padding: 10,
-                borderRadius: 10,
-                marginTop: 12,
-                color: "#fecaca",
-              }}
-            >
-              {err}
-            </div>
-          )}
-
-          {result && (
-            <div
-              style={{
-                marginTop: 14,
-                background: "rgba(255,255,255,.05)",
-                border: "1px solid rgba(255,255,255,.10)",
-                borderRadius: 14,
-                padding: 12,
-              }}
-            >
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>Selección sugerida</div>
-
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {result.picks.map((p, idx) => (
-                  <li key={idx} style={{ marginBottom: 6 }}>
-                    {p.text} · <b>{p.prob_pct.toFixed(2)}%</b>
-                  </li>
-                ))}
-              </ul>
-
-              <div style={{ marginTop: 10 }}>
-                Prob. combinada: <b>{result.combined_prob_pct.toFixed(2)}%</b> ·
-                Cuota justa: <b>{Number.isFinite(result.combined_fair_odds) ? result.combined_fair_odds : "∞"}</b>
-              </div>
-
-              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-                {result.summary}
-              </div>
-            </div>
-          )}
+          <div>
+            <div style={label}>Equipo visitante</div>
+            <input
+              style={input}
+              list="builder_away_list"
+              value={selAway}
+              onChange={(e) => setSelAway(e.target.value)}
+              placeholder="Visitante"
+            />
+            <datalist id="builder_away_list">
+              {filteredAway.map((t) => <option key={t} value={t} />)}
+            </datalist>
+          </div>
         </div>
+
+        {/* Actions */}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14 }}>
+          <button
+            onClick={onBuild}
+            disabled={!canBuild || loading}
+            style={{
+              ...btnPrimary,
+              opacity: !canBuild || loading ? 0.6 : 1,
+              cursor: !canBuild || loading ? "not-allowed" : "pointer",
+            }}
+          >
+            {loading ? "Generando…" : "Generar selección"}
+          </button>
+          <div style={pill}>Usando cuotas del partido (si existen)</div>
+        </div>
+
+        {/* Error */}
+        {err && (
+          <div
+            style={{
+              marginTop: 12,
+              background: "rgba(239,68,68,.12)",
+              border: "1px solid rgba(239,68,68,.35)",
+              padding: 12,
+              borderRadius: 12,
+              color: "#fecaca",
+            }}
+          >
+            {err}
+          </div>
+        )}
+
+        {/* Resultado */}
+        {result && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>Selección sugerida</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {result.legs.map((leg, i) => (
+                <div key={i} style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.12)", borderRadius: 12, padding: 12 }}>
+                  <div style={{ fontWeight: 800 }}>{leg.market}</div>
+                  <div style={{ marginTop: 2 }}>{leg.selection}</div>
+                  <div style={{ marginTop: 4, opacity: 0.9 }}>Prob: {leg.prob_pct.toFixed(2)}%</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, fontWeight: 800 }}>
+              Probabilidad combinada: {result.combo_prob_pct.toFixed(2)}%
+            </div>
+            <div style={{ marginTop: 6, opacity: 0.9 }}>{result.summary}</div>
+          </div>
+        )}
       </div>
-    </>
+    </div>
   );
 }
