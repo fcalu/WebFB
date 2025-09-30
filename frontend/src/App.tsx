@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import BestPickPro from "./components/BestPickPro";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ParlayDrawer from "./components/ParlayDrawer";
+
+// NUEVO: módulos de stake/historial
+import StakeModal from "./components/StakeModal";
+import BetHistoryDrawer from "./components/BetHistoryDrawer";
+
 /* ===== Tipos mínimos ===== */
 type ApiLeagues = { leagues: string[] };
 type ApiTeams = { teams: string[] };
@@ -54,6 +59,8 @@ const toFloat = (v: any) => {
   const x = Number(s);
   return Number.isFinite(x) ? x : undefined;
 };
+
+const pct = (n?: number) => (n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`);
 
 /* ===== Estilos base (dark) ===== */
 const page: React.CSSProperties = {
@@ -120,7 +127,13 @@ const pill: React.CSSProperties = {
 };
 
 /* ===== Cabecera minimal ===== */
-function Header() {
+function Header({
+  onOpenHistory,
+  onOpenParlay,
+}: {
+  onOpenHistory: () => void;
+  onOpenParlay: () => void;
+}) {
   return (
     <div
       style={{
@@ -155,6 +168,41 @@ function Header() {
             Predicción clara para usuarios finales
           </div>
         </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={onOpenHistory}
+          title="Historial de apuestas"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.12)",
+            color: "#d1d5db",
+            background: "rgba(255,255,255,.06)",
+          }}
+        >
+          📒 Historial
+        </button>
+        <button
+          onClick={onOpenParlay}
+          title="Generador de Parley"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.12)",
+            color: "#d1d5db",
+            background: "rgba(255,255,255,.06)",
+          }}
+        >
+          ☰ Parley
+        </button>
       </div>
     </div>
   );
@@ -266,7 +314,11 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [data, setData] = useState<PredictResponse | null>(null);
+
+  // Parley + Historial + Stake
   const [parlayOpen, setParlayOpen] = useState(false);
+  const [histOpen, setHistOpen] = useState(false);
+  const [stakeOpen, setStakeOpen] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/leagues`)
@@ -323,6 +375,49 @@ export default function App() {
     }
   }
 
+  // ======== Datos por defecto para el modal de Stake =========
+  const stakeDefaults = useMemo(() => {
+    if (!data) return null;
+    const prob01 = (data.best_pick?.prob_pct ?? 0) / 100;
+
+    // elegir cuota usada según el mercado
+    let odd: number | undefined;
+    if (data.best_pick.market === "1X2") {
+      odd =
+        data.best_pick.selection === "1"
+          ? odds["1"]
+          : data.best_pick.selection === "2"
+          ? odds["2"]
+          : odds["X"];
+    } else if (data.best_pick.market === "Over 2.5") {
+      odd = odds.O2_5;
+    } else if (data.best_pick.market === "BTTS" && data.best_pick.selection === "Sí") {
+      odd = odds.BTTS_YES;
+    }
+
+    const humanMarket =
+      data.best_pick.market === "1X2"
+        ? "Ganador del partido"
+        : data.best_pick.market === "Over 2.5"
+        ? "Más de 2.5 goles"
+        : data.best_pick.market === "BTTS"
+        ? "Ambos equipos anotan"
+        : data.best_pick.market;
+
+    const humanSelection =
+      data.best_pick.market === "1X2"
+        ? data.best_pick.selection === "1"
+          ? "Gana Local"
+          : data.best_pick.selection === "2"
+          ? "Gana Visitante"
+          : "Empate"
+        : data.best_pick.selection;
+
+    const matchLabel = `${data.home_team} vs ${data.away_team}`;
+
+    return { prob01, odd, humanMarket, humanSelection, matchLabel };
+  }, [data, odds]);
+
   return (
     <div style={page}>
       <style>{`
@@ -341,12 +436,11 @@ export default function App() {
       `}</style>
 
       <div style={wrap}>
-        <Header />
-          <button
-          onClick={() => setParlayOpen(true)}
-          title="Generador de Parley"
-          style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 14px", borderRadius:12, border:"1px solid rgba(255,255,255,.12)", color:"#d1d5db", background:"rgba(255,255,255,.06)" }}
-        >☰ Parley</button>
+        <Header
+          onOpenHistory={() => setHistOpen(true)}
+          onOpenParlay={() => setParlayOpen(true)}
+        />
+
         {/* Paso 1: Selección */}
         <div style={{ ...panel }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -365,7 +459,9 @@ export default function App() {
               >
                 <option value="">— Selecciona liga —</option>
                 {leagues.map((l) => (
-                  <option key={l} value={l}>{l}</option>
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
                 ))}
               </select>
             </div>
@@ -379,7 +475,9 @@ export default function App() {
                 style={input}
               />
               <datalist id="home_list">
-                {filteredHome.map((t) => <option key={t} value={t} />)}
+                {filteredHome.map((t) => (
+                  <option key={t} value={t} />
+                ))}
               </datalist>
             </div>
             <div>
@@ -392,7 +490,9 @@ export default function App() {
                 style={input}
               />
               <datalist id="away_list">
-                {filteredAway.map((t) => <option key={t} value={t} />)}
+                {filteredAway.map((t) => (
+                  <option key={t} value={t} />
+                ))}
               </datalist>
             </div>
           </div>
@@ -441,14 +541,55 @@ export default function App() {
             <SkeletonCard />
           </div>
         )}
-        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} API_BASE={API_BASE} isPremium={true /* o tu flag real */} />
-        {/* Resultado (UNA sola tarjeta pro) */}
+
+        {/* Parley & Historial (sliders) */}
+        <ParlayDrawer
+          open={parlayOpen}
+          onClose={() => setParlayOpen(false)}
+          API_BASE={API_BASE}
+          isPremium={true /* o tu flag real */}
+        />
+        <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
+
+        {/* Resultado (UNA sola tarjeta pro) + barra de acciones */}
         {data && !loading && (
-          <div style={{ marginTop: 12 }}>
-            <ErrorBoundary>
-              <BestPickPro data={data} odds={odds} />
-            </ErrorBoundary>
-          </div>
+          <>
+            {/* Barra de acciones para el pick: Stake */}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              <button
+                onClick={() => setStakeOpen(true)}
+                style={{
+                  ...pill,
+                  cursor: "pointer",
+                  borderColor: "#22c55e",
+                  background: "linear-gradient(135deg,#22c55e55,#16a34a55)",
+                  fontWeight: 900,
+                }}
+                title="Calcular stake con Kelly"
+              >
+                💰 Stake
+              </button>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <ErrorBoundary>
+                <BestPickPro data={data} odds={odds} />
+              </ErrorBoundary>
+            </div>
+          </>
+        )}
+
+        {/* Modal de Stake */}
+        {stakeDefaults && (
+          <StakeModal
+            open={stakeOpen}
+            onClose={() => setStakeOpen(false)}
+            matchLabel={stakeDefaults.matchLabel}
+            market={stakeDefaults.humanMarket}
+            selection={stakeDefaults.humanSelection}
+            defaultProb01={stakeDefaults.prob01}
+            defaultOdd={stakeDefaults.odd}
+          />
         )}
       </div>
     </div>
