@@ -624,13 +624,19 @@ export default function App() {
   onClick={() => setPremiumOpen(true)}
   title="Premium"
   style={{
-    display:"inline-flex", alignItems:"center", gap:8, padding:"10px 14px",
-    borderRadius:12, border:"1px solid rgba(255,255,255,.12)",
-    color:"#d1d5db", background:"rgba(255,255,255,.06)"
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,.12)",
+    color: "#d1d5db",
+    background: "rgba(255,255,255,.06)",
   }}
 >
   👑 Premium
 </button>
+
       <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
       <PremiumDrawer open={premiumOpen} onClose={() => setPremiumOpen(false)} />
       {/* <-- AQUÍ el banner PWA */}
