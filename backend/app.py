@@ -1,4 +1,9 @@
 # backend/app.py
+import sqlite3
+from fastapi.responses import PlainTextResponse
+
+
+
 import os
 import time
 import glob
@@ -379,6 +384,38 @@ def load_all_leagues():
 
 load_all_leagues()
 
+# ---------- Historial (SQLite) ----------
+DB_PATH = os.path.join(os.path.dirname(__file__), "history.db")
+
+def _db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER,
+      league TEXT,
+      home TEXT,
+      away TEXT,
+      market TEXT,
+      selection TEXT,
+      prob_pct REAL,
+      odd REAL,
+      stake REAL,
+      result TEXT DEFAULT 'pending'
+    )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+
 # Cache simple (clave → (ts, data))
 _CACHE: Dict[str, Tuple[float, dict]] = {}
 
@@ -411,6 +448,7 @@ class PredictIn(BaseModel):
     home_team: str
     away_team: str
     odds: Optional[Dict[str, float]] = None  # {"1":2.1,"X":3.2,"2":3.5,"O2_5":1.9,"BTTS_YES":1.8}
+    expert: bool = False  # <--- NUEVO
     # 'mode' se ignora por compatibilidad (frontend puede enviarlo)
 
 class BestPick(BaseModel):
@@ -528,7 +566,7 @@ def predict_sync(inp: PredictIn) -> PredictOut:
         averages=base["averages"],
         best_pick=base["best_pick"],
         summary=base["summary"],
-        debug=base.get("debug"),
+        debug=base.get("debug") if (inp.expert or EXPOSE_DEBUG) else None,
     )
 
 
@@ -731,6 +769,54 @@ def predict_core(store: LeagueStore, home: str, away: str, odds: Optional[Dict[s
         }
 
     return out
+
+class HistoryIn(BaseModel):
+    ts: int
+    league: str
+    home: str
+    away: str
+    market: str
+    selection: str
+    prob_pct: float
+    odd: float | None = None
+    stake: float | None = None
+
+@app.post("/history/log")
+def history_log(item: HistoryIn):
+    conn = _db(); cur = conn.cursor()
+    cur.execute("""
+      INSERT INTO history (ts,league,home,away,market,selection,prob_pct,odd,stake)
+      VALUES (?,?,?,?,?,?,?,?,?)
+    """, (item.ts, item.league, item.home, item.away, item.market, item.selection, item.prob_pct, item.odd, item.stake))
+    conn.commit()
+    rid = cur.lastrowid
+    conn.close()
+    return {"ok": True, "id": rid}
+
+@app.get("/history")
+def history_list(limit: int = 100):
+    conn = _db(); cur = conn.cursor()
+    cur.execute("SELECT * FROM history ORDER BY id DESC LIMIT ?", (limit,))
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return {"items": rows}
+
+@app.get("/history/export.csv", response_class=PlainTextResponse)
+def history_export_csv():
+    conn = _db(); cur = conn.cursor()
+    cur.execute("SELECT * FROM history ORDER BY id DESC")
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return "id,ts,league,home,away,market,selection,prob_pct,odd,stake,result\n"
+
+    cols = rows[0].keys()
+    out = ",".join(cols) + "\n"
+    for r in rows:
+        out += ",".join(str(r[c]) if r[c] is not None else "" for c in cols) + "\n"
+    return out
+
 
 # --------------------------------------------------------------------------------------
 # Endpoints

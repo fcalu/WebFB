@@ -299,6 +299,7 @@ function OddsEditor({
         </div>
       </div>
       <div
+      
         style={{
           marginTop: 10,
           display: "grid",
@@ -364,6 +365,7 @@ export default function App() {
   const [err, setErr] = useState("");
   const [data, setData] = useState<PredictResponse | null>(null);
   const [premiumOpen, setPremiumOpen] = useState(false);
+  const [expert, setExpert] = useState(false);
   // Parley + Historial + Stake
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
@@ -408,8 +410,8 @@ export default function App() {
     setErr("");
     setData(null);
     try {
-      const body: any = { league, home_team: home, away_team: away };
-      if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) {
+      const body: any = { league, home_team: home, away_team: away, expert };
+      if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds; {
         body.odds = odds;
       }
       const res = await fetch(`${API_BASE}/predict`, {
@@ -420,6 +422,32 @@ export default function App() {
       if (!res.ok) throw new Error(await res.text());
       const json: PredictResponse = await res.json();
       setData(json);
+
+      try {
+  // log al historial (sin stake por ahora)
+  await fetch(`${API_BASE}/history/log`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ts: Math.floor(Date.now()/1000),
+      league,
+      home,
+      away,
+      market: json.best_pick.market,
+      selection: json.best_pick.selection,
+      prob_pct: json.best_pick.prob_pct,
+      odd:
+        json.best_pick.market === "1X2"
+          ? json.best_pick.selection === "1" ? odds["1"] : json.best_pick.selection === "2" ? odds["2"] : odds["X"]
+          : json.best_pick.market === "Over 2.5" ? odds.O2_5
+          : json.best_pick.market === "BTTS" && json.best_pick.selection === "Sí" ? odds.BTTS_YES
+          : undefined,
+      stake: null,
+    }),
+  });
+} catch {}
+
+
     } catch (e: any) {
       setErr(e?.message || "Error al predecir.");
     } finally {
@@ -495,6 +523,12 @@ export default function App() {
           onOpenParlay={() => setParlayOpen(true)}
           onOpenBuilder={() => setBuilderOpen(true)}
         />
+        <div style={{ display:"flex", gap:8, alignItems:"center", marginTop:8 }}>
+        <label style={{ fontSize:12, opacity:.8 }}>
+          <input type="checkbox" checked={expert} onChange={e=>setExpert(e.target.checked)} />
+          &nbsp;Modo experto (ver detalles POISSON/DC)
+        </label>
+      </div>
 
         {/* Paso 1: Selección */}
         <div style={{ ...panel }}>
@@ -669,6 +703,20 @@ export default function App() {
               >
                 💰 Stake
               </button>
+
+              <button
+              onClick={async ()=>{
+                const body:any = { league, home_team: home, away_team: away };
+                if (odds["1"]||odds.X||odds["2"]||odds.O2_5||odds.BTTS_YES) body.odds = odds;
+                await fetch(`${API_BASE}/alerts/value-pick`, {
+                  method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body)
+                });
+                alert("Enviado (si cumple umbrales).");
+              }}
+              style={{ ...pill, cursor:"pointer" }}
+              title="Enviar a Telegram si es value pick"
+            >📣 Alerta</button>
+
             </div>
 
             <div style={{ marginTop: 12 }}>
