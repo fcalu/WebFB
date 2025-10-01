@@ -4,9 +4,9 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import ParlayDrawer from "./components/ParlayDrawer";
 import BuilderDrawer from "./components/BuilderDrawer";
 import NavDrawer from "./components/NavDrawer";
-import NavHamburger from "./components/NavHamburger";
-import InstallBanner from "./components/InstallBanner";
 
+import InstallBanner from "./components/InstallBanner";
+import PremiumDrawer from "./components/PremiumDrawer";
 
 // NUEVO: módulos de stake/historial
 import StakeModal from "./components/StakeModal";
@@ -363,7 +363,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [data, setData] = useState<PredictResponse | null>(null);
-
+  const [premiumOpen, setPremiumOpen] = useState(false);
   // Parley + Historial + Stake
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
@@ -487,11 +487,6 @@ export default function App() {
           padding: 10px 14px; display:flex; gap:10px; align-items:center; justify-content:space-between;
         }
       `}</style>
-      <NavHamburger
-        onOpenParlay={() => setParlayOpen(true)}
-        onOpenBuilder={() => setBuilderOpen(true)}
-        onOpenHistory={() => setHistOpen(true)}
-      />
 
       <div style={wrap}>
         <Header
@@ -625,8 +620,19 @@ export default function App() {
         away={away}
         odds={odds}
       />
-
+      <button
+  onClick={() => setPremiumOpen(true)}
+  title="Premium"
+  style={{
+    display:"inline-flex", alignItems:"center", gap:8, padding:"10px 14px",
+    borderRadius:12, border:"1px solid rgba(255,255,255,.12)",
+    color:"#d1d5db", background:"rgba(255,255,255,.06)"
+  }}
+>
+  👑 Premium
+</button>
       <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
+      <PremiumDrawer open={premiumOpen} onClose={() => setPremiumOpen(false)} />
       {/* <-- AQUÍ el banner PWA */}
 <InstallBanner />
 
