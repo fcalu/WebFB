@@ -4,6 +4,8 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import ParlayDrawer from "./components/ParlayDrawer";
 import BuilderDrawer from "./components/BuilderDrawer";
 import NavDrawer from "./components/NavDrawer";
+import NavHamburger from "./components/NavHamburger";
+import InstallBanner from "./components/InstallBanner";
 
 
 // NUEVO: módulos de stake/historial
@@ -485,7 +487,11 @@ export default function App() {
           padding: 10px 14px; display:flex; gap:10px; align-items:center; justify-content:space-between;
         }
       `}</style>
-
+      <NavHamburger
+        onOpenParlay={() => setParlayOpen(true)}
+        onOpenBuilder={() => setBuilderOpen(true)}
+        onOpenHistory={() => setHistOpen(true)}
+      />
 
       <div style={wrap}>
         <Header
@@ -620,7 +626,18 @@ export default function App() {
         odds={odds}
       />
 
-        <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
+      <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
+      {/* <-- AQUÍ el banner PWA */}
+<InstallBanner />
+
+      {/* Resultado (UNA sola tarjeta pro) */}
+      {data && !loading && (
+        <div style={{ marginTop: 12 }}>
+          <ErrorBoundary>
+            <BestPickPro data={data} odds={odds} />
+          </ErrorBoundary>
+        </div>
+      )} 
 
         {/* Resultado (UNA sola tarjeta pro) + barra de acciones */}
         {data && !loading && (
