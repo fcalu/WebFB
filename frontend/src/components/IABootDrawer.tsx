@@ -16,8 +16,8 @@ type Props = {
 type ApiLeagues = { leagues: string[] };
 type ApiTeams = { teams: string[] };
 
-// Respuesta flexible del backend de IA Boot
-type IAPick = { market: string; selection: string; prob_pct?: number; rationale?: string };
+// Respuesta flexible del backend de IA Boot (Debe coincidir con IABootOut de Python)
+type IAPick = { market: string; selection: string; prob_pct?: number; confidence?: number; rationale?: string };
 type IABootResponse =
   | {
       summary?: string;
@@ -260,49 +260,95 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
           </div>
         )}
 
-        {/* Resultado */}
+        {/* ========================================================= */}
+        {/* === RESULTADO (DISEÑO PROFESIONAL) === */}
+        {/* ========================================================= */}
         {resp && (
-          <div style={{ ...card, marginTop: 14 }}>
-            {/* Modo ticket: picks en tarjetas */}
+          <div style={{ marginTop: 14 }}>
+            {/* Título / Resumen General - Tarjeta Destacada */}
+            {(resp.summary || resp.explanation) && (
+              <div 
+                style={{ 
+                  ...card, 
+                  marginBottom: 16,
+                  background: "rgba(124,58,237, 0.15)", // Fondo sutil del color principal
+                  border: "1px solid rgba(124,58,237, 0.5)",
+                }}
+              >
+                <div style={{ color: "#a5b4fc", fontWeight: 800, fontSize: 13, marginBottom: 8, letterSpacing: 0.5 }}>
+                  ANÁLISIS COMPLETO (IA BOOT)
+                </div>
+                <div style={{ fontSize: 15, lineHeight: 1.5, opacity: 0.9 }}>
+                  {resp.summary || resp.explanation}
+                </div>
+              </div>
+            )}
+
+            {/* Lista de Picks Detallados - Tarjetas Individuales */}
             {Array.isArray(resp?.picks) && resp.picks.length > 0 ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                {resp.picks.map((p: IAPick, i: number) => (
-                  <div
-                    key={i}
-                    style={{
-                      background: "rgba(255,255,255,.04)",
-                      border: "1px dashed rgba(255,255,255,.14)",
-                      borderRadius: 14,
-                      padding: 12,
-                    }}
-                  >
-                    <div style={{ fontWeight: 900, fontSize: 14 }}>
-                      {p.market} — <span style={{ opacity: 0.9 }}>{p.selection}</span>
-                      {typeof p.prob_pct === "number" && (
-                        <span style={{ marginLeft: 8, fontWeight: 700, color: "#a5b4fc" }}>
-                          {p.prob_pct.toFixed(2)}%
-                        </span>
+              <div style={{ display: "grid", gap: 14 }}>
+                {resp.picks.map((p: IAPick, i: number) => {
+                  const probPct = p.prob_pct ?? 0;
+                  
+                  // Determinar color de confianza (Alto > 75%, Medio > 60%, Bajo)
+                  const confidenceColor = probPct >= 75 
+                    ? "#22c55e" // Verde
+                    : probPct >= 60 
+                    ? "#facc15" // Amarillo
+                    : "#fb7185"; // Rojo/Rosado
+                  
+                  return (
+                    <div
+                      key={i}
+                      style={{ 
+                        ...card, 
+                        padding: 16, 
+                        borderLeft: `4px solid ${confidenceColor}`, 
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                      }}
+                    >
+                      
+                      {/* TOP LINE: PICK NAME AND PROBABILITY */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        {/* Market & Selection */}
+                        <div style={{ fontWeight: 900, fontSize: 16 }}>
+                          {p.market} — <span style={{ color: confidenceColor }}>{p.selection}</span>
+                        </div>
+                        
+                        {/* Probability */}
+                        {typeof p.prob_pct === "number" && (
+                          <div style={{ fontWeight: 900, fontSize: 17, color: '#e5e7eb' }}>
+                            {probPct.toFixed(2)}%
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* BOTTOM LINE: RATIONALE */}
+                      {p.rationale && (
+                        <div style={{ 
+                          opacity: 0.8, 
+                          fontSize: 13, 
+                          color: '#9ca3af' // Gris sutil para la explicación
+                        }}>
+                          {p.rationale}
+                        </div>
                       )}
                     </div>
-                    {p.rationale && <div style={{ opacity: 0.9, marginTop: 6, fontSize: 13 }}>{p.rationale}</div>}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
 
-            {/* Resumen/explicación */}
-            {(resp.summary || resp.explanation) && (
-              <div style={{ marginTop: 12, opacity: 0.95 }}>{resp.summary || resp.explanation}</div>
-            )}
-
             {/* Texto crudo si el backend devuelve raw_text */}
             {resp.raw_text && (
-              <div style={{ marginTop: 12, whiteSpace: "pre-wrap", opacity: 0.95 }}>{resp.raw_text}</div>
+              <div style={{ ...card, marginTop: 12, whiteSpace: "pre-wrap", opacity: 0.95 }}>{resp.raw_text}</div>
             )}
 
             {/* Métricas de combo si existen */}
             {typeof resp.combined_prob_pct === "number" && (
-              <div style={{ marginTop: 12, fontWeight: 800 }}>
+              <div style={{ ...card, marginTop: 12, fontWeight: 800 }}>
                 Prob. combinada: {resp.combined_prob_pct.toFixed(2)}%
                 {typeof resp.combined_fair_odds === "number" && (
                   <> · Cuota justa ~ {resp.combined_fair_odds}</>
