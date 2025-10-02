@@ -2,6 +2,9 @@
 import sqlite3
 from fastapi.responses import PlainTextResponse
 
+# === IA Boot (OpenAI) ===
+from openai import OpenAI
+from tenacity import retry, wait_exponential, stop_after_attempt
 
 
 import os
@@ -34,12 +37,17 @@ MARKET_WEIGHT        = float(os.getenv("MARKET_WEIGHT", "0.35"))  # peso de merc
 USE_CACHED_RATINGS   = os.getenv("USE_CACHED_RATINGS", "1") == "1"
 CACHE_TTL_SECONDS    = int(os.getenv("CACHE_TTL_SECONDS", "600")) # 10 min
 EXPOSE_DEBUG         = os.getenv("EXPOSE_DEBUG", "0") == "1"      # anexa campo "debug" en output
-
+# === IA Boot flags ===
+IABOOT_ON = os.getenv("IABOOT_ON", "0") == "1"
+IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-5-mini")
+IABOOT_TEMPERATURE = float(os.getenv("IABOOT_TEMPERATURE", "0.2"))
 # --------------------------------------------------------------------------------------
 # Configuración básica
 # --------------------------------------------------------------------------------------
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 POISSON_MAX_GOALS = 7
+
+_openai_client = OpenAI()
 
 app = FastAPI(title="FootyMines API (hybrid-core)")
 
@@ -514,6 +522,21 @@ class BuilderOut(BaseModel):
     summary: str
     debug: Optional[Dict[str, float]] = None
 
+# ===== IA Boot (salida estructurada) =====
+class IABootLeg(BaseModel):
+    market: str          # "1X2", "Over 2.5", "BTTS", "Corners", "Cards"
+    selection: str       # "Gana local", "1X", "Más de 2.5", "Sí", "Menos de 4.5", ...
+    prob_pct: float      # 0..100
+    confidence: float    # 0..100
+    rationale: str       # explicación breve en español, estilo 'assistant'
+
+class IABootOut(BaseModel):
+    match: str
+    league: str
+    summary: str         # explicación de alto nivel en 1-2 párrafos
+    picks: List[IABootLeg]
+
+
 def _leg_used_odd_for_pick(predict_out: PredictOut, odds: Optional[Dict[str,float]]) -> Optional[float]:
     """Busca la cuota que corresponde al pick seleccionado."""
     if not odds:
@@ -568,6 +591,17 @@ def predict_sync(inp: PredictIn) -> PredictOut:
         summary=base["summary"],
         debug=base.get("debug") if (inp.expert or EXPOSE_DEBUG) else None,
     )
+
+@retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3))
+def _call_openai_structured(model: str, temperature: float, schema: dict, messages: list[dict]):
+    return _openai_client.responses.create(
+        model=model,
+        temperature=temperature,
+        response_format={"type": "json_schema", "json_schema": {"name": "IABoot", "schema": schema}},
+        input=messages,
+        max_output_tokens=800,  # seguro para tu tier
+    )
+
 
 
 @app.post("/parlay/suggest", response_model=ParlayOut)
@@ -1018,4 +1052,74 @@ def builder_suggest(inp: BuilderIn):
         combo_prob_pct=combo_pct,
         summary=summary,
         debug=None
+    )
+@app.post("/iaboot/predict", response_model=IABootOut)
+def iaboot_predict(inp: PredictIn, request: Request):
+    if not IABOOT_ON:
+        raise HTTPException(status_code=503, detail="IABoot está desactivado")
+
+    # Reusar nuestro core híbrido (calibrado+blend):
+    pred = predict_sync(inp)
+
+    # Form reciente para contexto
+    store = LEAGUES.get(inp.league)
+    form_text = _recent_form_snippet(store, inp.home_team, inp.away_team, n=6) if store else ""
+
+    # Prompt + schema
+    sys, user = _iaboot_messages(pred, inp.odds, form_text)
+    schema = _iaboot_schema()
+
+    # Llamada IA (con retry/espera exponencial)
+    try:
+        resp = _call_openai_structured(
+            model=IABOOT_MODEL,
+            temperature=IABOOT_TEMPERATURE,
+            schema=schema,
+            messages=[{"role":"system","content":sys}, {"role":"user","content":str(user)}],
+        )
+    except Exception as e:
+        # Fallback: si algo falla, devolvemos el best_pick base
+        fallback = IABootOut(
+            match=f"{pred.home_team} vs {pred.away_team}",
+            league=pred.league,
+            summary="Servicio IA no disponible. Se muestra el mejor pick del modelo base.",
+            picks=[IABootLeg(
+                market=pred.best_pick.market,
+                selection=("Gana local" if pred.best_pick.selection=="1"
+                           else "Gana visitante" if pred.best_pick.selection=="2"
+                           else "Empate" if pred.best_pick.selection=="X"
+                           else pred.best_pick.selection),
+                prob_pct=pred.best_pick.prob_pct,
+                confidence=pred.best_pick.confidence,
+                rationale="Basado en Poisson calibrado y blend con mercado.",
+            )],
+        )
+        return fallback
+
+    # `resp.output_text` es el atajo del SDK para el único bloque de salida
+    # (puede venir ya como JSON string)
+    txt = getattr(resp, "output_text", None) or ""
+    try:
+        import json
+        payload = json.loads(txt)
+    except Exception:
+        # Por si acaso, intentamos parsear desde el primer 'json' del objeto
+        payload = resp.to_dict()  # extremo, pero evita perder la respuesta
+
+    # Normalizar a Pydantic
+    picks = []
+    for p in (payload.get("picks") or []):
+        picks.append(IABootLeg(
+            market=p.get("market",""),
+            selection=p.get("selection",""),
+            prob_pct=float(p.get("prob_pct",0) or 0),
+            confidence=float(p.get("confidence",0) or 0),
+            rationale=p.get("rationale",""),
+        ))
+
+    return IABootOut(
+        match=payload.get("match", f"{pred.home_team} vs {pred.away_team}"),
+        league=payload.get("league", pred.league),
+        summary=payload.get("summary", ""),
+        picks=picks[:5],
     )

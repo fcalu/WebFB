@@ -4,6 +4,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import ParlayDrawer from "./components/ParlayDrawer";
 import BuilderDrawer from "./components/BuilderDrawer";
 import NavDrawer from "./components/NavDrawer";
+import IABootDrawer from "./components/IABootDrawer";
 
 import InstallBanner from "./components/InstallBanner";
 import PremiumDrawer from "./components/PremiumDrawer";
@@ -138,11 +139,13 @@ function Header({
   onOpenHistory,
   onOpenParlay,
   onOpenBuilder,
+  onOpenIABoot, // <-- AÑADIDO
 }: {
   onOpenMenu: () => void;
   onOpenHistory: () => void;
   onOpenParlay: () => void;
   onOpenBuilder: () => void;
+  onOpenIABoot: () => void; // <-- AÑADIDO
 }) {
   return (
     <div
@@ -252,6 +255,16 @@ function Header({
         >
           🧮 Parley
         </button>
+        <button
+          onClick={onOpenIABoot}
+          title="IA Boot"
+          style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 14px",
+                  borderRadius:12, border:"1px solid rgba(255,255,255,.12)",
+                  color:"#d1d5db", background:"rgba(255,255,255,.06)" }}
+        >
+          🤖 IA Boot
+        </button>
+
       </div>
     </div>
   );
@@ -366,6 +379,8 @@ export default function App() {
   const [data, setData] = useState<PredictResponse | null>(null);
   const [premiumOpen, setPremiumOpen] = useState(false);
   const [expert, setExpert] = useState(false);
+  const [iaOpen, setIaOpen] = useState(false);
+
   // Parley + Historial + Stake
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
@@ -410,10 +425,10 @@ export default function App() {
     setErr("");
     setData(null);
     try {
-      const body: any = { league, home_team: home, away_team: away, expert };
-      if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds; {
-        body.odds = odds;
-      }
+      const body: any = { league, home_team: home, away_team: away }; // no envíes 'expert' al backend
+        if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) {
+          body.odds = odds;
+        }
       const res = await fetch(`${API_BASE}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -522,6 +537,8 @@ export default function App() {
           onOpenHistory={() => setHistOpen(true)}
           onOpenParlay={() => setParlayOpen(true)}
           onOpenBuilder={() => setBuilderOpen(true)}
+          onOpenIABoot={() => setIaOpen(true)}  // <-- AÑADIDO
+          
         />
         <div style={{ display:"flex", gap:8, alignItems:"center", marginTop:8 }}>
         <label style={{ fontSize:12, opacity:.8 }}>
@@ -654,6 +671,15 @@ export default function App() {
         away={away}
         odds={odds}
       />
+      <IABootDrawer
+        open={iaOpen}
+        onClose={() => setIaOpen(false)}
+        API_BASE={API_BASE}
+        league={league}
+        home={home}
+        away={away}
+        odds={odds}
+      />
       <button
   onClick={() => setPremiumOpen(true)}
   title="Premium"
@@ -675,15 +701,6 @@ export default function App() {
       <PremiumDrawer open={premiumOpen} onClose={() => setPremiumOpen(false)} />
       {/* <-- AQUÍ el banner PWA */}
 <InstallBanner />
-
-      {/* Resultado (UNA sola tarjeta pro) */}
-      {data && !loading && (
-        <div style={{ marginTop: 12 }}>
-          <ErrorBoundary>
-            <BestPickPro data={data} odds={odds} />
-          </ErrorBoundary>
-        </div>
-      )} 
 
         {/* Resultado (UNA sola tarjeta pro) + barra de acciones */}
         {data && !loading && (
