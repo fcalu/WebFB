@@ -1178,6 +1178,7 @@ def iaboot_predict(inp: PredictIn, request: Request):
     except Exception as e:
         print(f"OPENAI API CALL FAILED: {type(e).__name__}: {e}", file=sys.stderr)
         # Fallback: si algo falla, devolvemos el best_pick base
+        # ... (el código fallback sigue igual)
         fallback = IABootOut(
             match=f"{pred.home_team} vs {pred.away_team}",
             league=pred.league,
@@ -1195,16 +1196,24 @@ def iaboot_predict(inp: PredictIn, request: Request):
         )
         return fallback
 
-    # `resp.output_text` es el atajo del SDK para el único bloque de salida
-    # (puede venir ya como JSON string)
-    txt = getattr(resp, "output_text", None) or ""
+    # A partir de aquí, la llamada fue HTTP 200 OK
     
+    # --------------------------------------------------------
+    # CORRECCIÓN CLAVE: Extraer el JSON del campo estándar 'content'
+    # --------------------------------------------------------
+    txt = ""
+    if resp.choices and resp.choices[0].message.content:
+        # El JSON está aquí
+        txt = resp.choices[0].message.content
+
     try:
         import json
         payload = json.loads(txt)
-    except Exception:
-        # Por si acaso, intentamos parsear desde el primer 'json' del objeto
-        payload = resp.to_dict()  # extremo, pero evita perder la respuesta
+    except Exception as e:
+        # Si falla el JSON.loads, logueamos el texto problemático y forzamos el fallback.
+        print(f"ERROR PARSING AI JSON: {e}. Raw text: {txt[:200]}...", file=sys.stderr)
+        # Forzamos el fallback de nuevo, porque no podemos confiar en la respuesta.
+        raise ValueError("AI returned non-parseable JSON.")
 
     # Normalizar a Pydantic
     picks = []
