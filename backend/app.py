@@ -40,7 +40,7 @@ EXPOSE_DEBUG         = os.getenv("EXPOSE_DEBUG", "0") == "1"      # anexa campo 
 # === IA Boot flags ===
 IABOOT_ON = os.getenv("IABOOT_ON", "0") == "1"
 IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-4o")
-IABOOT_TEMPERATURE = float(os.getenv("IABOOT_TEMPERATURE", "0.2"))
+IABOOT_TEMPERATURE = float(os.getenv("IABOOT_TEMPERATURE", "0.5"))
 # --------------------------------------------------------------------------------------
 # Configuración básica
 # --------------------------------------------------------------------------------------
@@ -1004,13 +1004,13 @@ def _iaboot_messages(pred: PredictOut, odds: Optional[Dict[str, float]], form_te
     }
 
     system = (
-        "Eres IABoot, analista de fútbol. Escribe en ESPAÑOL, claro y breve. "
-        "No inventes datos: usa únicamente los números del payload. "
+        "Eres IABoot, un analista de apuestas profesional y estratégico. Tu objetivo es generar un análisis "
+        "único y de alto valor en ESPAÑOL. Analiza la **forma reciente** ('form_snippet') y las "
+        "probabilidades ('probs') para identificar la mejor estrategia de apuesta (picks). "
+        "No inventes datos numéricos. Tu 'summary' debe ser una narrativa concisa y persuasiva que justifique "
+        "la selección basándose en la ventaja estadística y la tendencia histórica reciente. "
         "Devuelve SIEMPRE un JSON que cumpla exactamente el esquema. "
-        "En 'picks' elige de 2 a 4 selecciones de alto valor para usuario final "
-        "(p.ej. Doble oportunidad 1X/X2, Más de 2.5, BTTS Sí, Tarjetas Under/Over, Córners Over). "
-        "Incluye 'prob_pct' y 'confidence' como números (0..100). "
-        "La 'summary' debe explicar en 2-4 frases por qué recomiendas esas selecciones."
+        "Incluye 2 a 4 picks de alta convicción."
     )
     user = (
         "Datos del partido (payload JSON):\n"

@@ -160,7 +160,12 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
       const j: IABootResponse = await r.json();
       setResp(j);
     } catch (e: any) {
-      setErr(e?.message || "Error generando IA Boot.");
+      // Si el error es una excepción lanzada por ValueError en el backend:
+      if (e?.message && e.message.includes("AI returned non-parseable JSON")) {
+         setErr("Error: La IA devolvió un formato incorrecto. Intenta de nuevo.");
+      } else {
+         setErr(e?.message || "Error generando IA Boot.");
+      }
     } finally {
       setLoading(false);
     }
@@ -278,7 +283,8 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
                 <div style={{ color: "#a5b4fc", fontWeight: 800, fontSize: 13, marginBottom: 8, letterSpacing: 0.5 }}>
                   ANÁLISIS COMPLETO (IA BOOT)
                 </div>
-                <div style={{ fontSize: 15, lineHeight: 1.5, opacity: 0.9 }}>
+                <div style={{ fontSize: 16, lineHeight: 1.6, opacity: 0.95, color: '#f3f4f6' }}>
+                  {/* El summary va aquí, con un tamaño y espaciado mejorado */}
                   {resp.summary || resp.explanation}
                 </div>
               </div>
@@ -288,14 +294,16 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
             {Array.isArray(resp?.picks) && resp.picks.length > 0 ? (
               <div style={{ display: "grid", gap: 14 }}>
                 {resp.picks.map((p: IAPick, i: number) => {
-                  const probPct = p.prob_pct ?? 0;
+                  // Usamos 'confidence' si existe, sino usamos 'prob_pct'
+                  const score = p.confidence ?? p.prob_pct ?? 0;
+                  const displayProb = p.prob_pct ?? 0;
                   
                   // Determinar color de confianza (Alto > 75%, Medio > 60%, Bajo)
-                  const confidenceColor = probPct >= 75 
-                    ? "#22c55e" // Verde
-                    : probPct >= 60 
-                    ? "#facc15" // Amarillo
-                    : "#fb7185"; // Rojo/Rosado
+                  const confidenceColor = score >= 75 
+                    ? "#22c55e" // Verde (High conviction)
+                    : score >= 60 
+                    ? "#facc15" // Amarillo (Medium conviction)
+                    : "#fb7185"; // Rojo/Rosado (Lower conviction)
                   
                   return (
                     <div
@@ -320,7 +328,7 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
                         {/* Probability */}
                         {typeof p.prob_pct === "number" && (
                           <div style={{ fontWeight: 900, fontSize: 17, color: '#e5e7eb' }}>
-                            {probPct.toFixed(2)}%
+                            {displayProb.toFixed(2)}%
                           </div>
                         )}
                       </div>
