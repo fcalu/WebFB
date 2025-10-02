@@ -39,7 +39,7 @@ CACHE_TTL_SECONDS    = int(os.getenv("CACHE_TTL_SECONDS", "600")) # 10 min
 EXPOSE_DEBUG         = os.getenv("EXPOSE_DEBUG", "0") == "1"      # anexa campo "debug" en output
 # === IA Boot flags ===
 IABOOT_ON = os.getenv("IABOOT_ON", "0") == "1"
-IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-5-mini")
+IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-3.5-turbo")
 IABOOT_TEMPERATURE = float(os.getenv("IABOOT_TEMPERATURE", "0.2"))
 # --------------------------------------------------------------------------------------
 # Configuración básica
@@ -1217,6 +1217,7 @@ def iaboot_predict(inp: PredictIn, request: Request):
         summary=payload.get("summary", ""),
         picks=picks[:5],
     )
+# CÓDIGO CORREGIDO para iaboot_suggest
 @app.post("/iaboot/suggest", response_model=IABootOut)
 def iaboot_suggest(inp: PredictIn, request: Request):
-    return iaboot_predict(inp, request)
+    return iaboot_predict(inp, request) # SOLO devuelve el resultado de la función
