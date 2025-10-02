@@ -1,7 +1,7 @@
 # backend/app.py
 import sqlite3
 from fastapi.responses import PlainTextResponse
-
+import sys
 # === IA Boot (OpenAI) ===
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
@@ -593,16 +593,21 @@ def predict_sync(inp: PredictIn) -> PredictOut:
     )
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3))
+@retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3))
 def _call_openai_structured(model: str, temperature: float, schema: dict, messages: list[dict]):
-    return _openai_client.responses.create(
+    # El método correcto es chat.completions.create
+    return _openai_client.chat.completions.create(
         model=model,
         temperature=temperature,
-        response_format={"type": "json_schema", "json_schema": {"name": "IABoot", "schema": schema}},
-        input=messages,
-        max_output_tokens=800,  # seguro para tu tier
+        # El parámetro correcto es 'response_model' o 'response_format' DENTRO DE ESTE MÉTODO,
+        # pero para compatibilidad y simplicidad, usaremos el formato JSON estándar:
+        response_format={"type": "json_object"}, 
+        # NOTA: La estructura de Pydantic y el 'schema' deben ser manejados por el prompt.
+        
+        # El nombre del parámetro para los mensajes es 'messages'
+        messages=messages,
+        max_tokens=800,  # 'max_output_tokens' es ahora 'max_tokens'
     )
-
-
 
 @app.post("/parlay/suggest", response_model=ParlayOut)
 def parlay_suggest(inp: ParlayIn):
