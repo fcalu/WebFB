@@ -1171,6 +1171,7 @@ def iaboot_predict(inp: PredictIn, request: Request):
             messages=[{"role":"system","content":sys}, {"role":"user","content":str(user)}],
         )
     except Exception as e:
+        print(f"OPENAI API CALL FAILED: {type(e).__name__}: {e}", file=sys.stderr)
         # Fallback: si algo falla, devolvemos el best_pick base
         fallback = IABootOut(
             match=f"{pred.home_team} vs {pred.away_team}",
