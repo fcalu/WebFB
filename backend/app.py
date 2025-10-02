@@ -921,6 +921,99 @@ def _p_under_xdot5(lam: float, xdot5: float) -> float:
     kmax = int(floor(xdot5))
     return float(poisson.cdf(kmax, lam))
 
+def _recent_form_snippet(store: LeagueStore, home: str, away: str, n: int = 6) -> str:
+    """
+    Devuelve un mini-resumen de forma reciente de ambos equipos (últimos n partidos).
+    Usa las columnas existentes del CSV. Es aproximado y a prueba de columnas faltantes.
+    """
+    df = store.df
+    def form_for(team: str) -> str:
+        sub = df[(df["home_team_name"] == team) | (df["away_team_name"] == team)].tail(n)
+        if sub.empty:
+            return "—"
+        res = []
+        gf = ga = 0.0
+        for _, r in sub.iterrows():
+            if r["home_team_name"] == team:
+                gh, ga1 = float(r["home_team_goal_count"]), float(r["away_team_goal_count"])
+            else:
+                gh, ga1 = float(r["away_team_goal_count"]), float(r["home_team_goal_count"])
+            gf += gh; ga += ga1
+            res.append("W" if gh > ga1 else "D" if gh == ga1 else "L")
+        streak = "".join(res[-n:])
+        games = max(1, len(sub))
+        return f"{streak} · GF{gf/games:.2f}/GC{ga/games:.2f}"
+    return f"Forma reciente – {home}: {form_for(home)} | {away}: {form_for(away)}"
+
+
+def _iaboot_schema() -> dict:
+    """
+    Esquema JSON para la salida del modelo (structured output).
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "match":   {"type": "string"},
+            "league":  {"type": "string"},
+            "summary": {"type": "string"},
+            "picks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "market":     {"type": "string"},
+                        "selection":  {"type": "string"},
+                        "prob_pct":   {"type": "number"},
+                        "confidence": {"type": "number"},
+                        "rationale":  {"type": "string"},
+                    },
+                    "required": ["market","selection","prob_pct","confidence","rationale"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["match","league","summary","picks"],
+        "additionalProperties": False,
+    }
+
+
+def _iaboot_messages(pred: PredictOut, odds: Optional[Dict[str, float]], form_text: str) -> tuple[str, str]:
+    """
+    Construye los mensajes system/user para la llamada a OpenAI.
+    """
+    # Payload compacto con datos NUMÉRICOS para no permitir invenciones
+    payload = {
+        "match": f"{pred.home_team} vs {pred.away_team}",
+        "league": pred.league,
+        "probs": pred.probs,                # 1X2, over2.5, BTTS ya calibrados/blend
+        "poisson": pred.poisson,            # lambdas y top scorelines
+        "averages": pred.averages,          # promedios corners/tarjetas
+        "odds": odds or {},                 # si las envías desde el front
+        "best_pick": {
+            "market": pred.best_pick.market,
+            "selection": pred.best_pick.selection,
+            "prob_pct": pred.best_pick.prob_pct,
+            "confidence": pred.best_pick.confidence,
+        },
+        "form_snippet": form_text,
+    }
+
+    system = (
+        "Eres IABoot, analista de fútbol. Escribe en ESPAÑOL, claro y breve. "
+        "No inventes datos: usa únicamente los números del payload. "
+        "Devuelve SIEMPRE un JSON que cumpla exactamente el esquema. "
+        "En 'picks' elige de 2 a 4 selecciones de alto valor para usuario final "
+        "(p.ej. Doble oportunidad 1X/X2, Más de 2.5, BTTS Sí, Tarjetas Under/Over, Córners Over). "
+        "Incluye 'prob_pct' y 'confidence' como números (0..100). "
+        "La 'summary' debe explicar en 2-4 frases por qué recomiendas esas selecciones."
+    )
+    user = (
+        "Datos del partido (payload JSON):\n"
+        + __import__("json").dumps(payload, ensure_ascii=False)
+    )
+    return system, user
+
+
 @app.post("/builder/suggest", response_model=BuilderOut)
 def builder_suggest(inp: BuilderIn):
     # Reutiliza las probabilidades ya calibradas/mezcladas del core
@@ -1099,6 +1192,7 @@ def iaboot_predict(inp: PredictIn, request: Request):
     # `resp.output_text` es el atajo del SDK para el único bloque de salida
     # (puede venir ya como JSON string)
     txt = getattr(resp, "output_text", None) or ""
+    
     try:
         import json
         payload = json.loads(txt)
@@ -1123,3 +1217,6 @@ def iaboot_predict(inp: PredictIn, request: Request):
         summary=payload.get("summary", ""),
         picks=picks[:5],
     )
+@app.post("/iaboot/suggest", response_model=IABootOut)
+def iaboot_suggest(inp: PredictIn, request: Request):
+    return iaboot_predict(inp, request)
