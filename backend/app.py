@@ -1178,7 +1178,6 @@ def iaboot_predict(inp: PredictIn, request: Request):
     except Exception as e:
         print(f"OPENAI API CALL FAILED: {type(e).__name__}: {e}", file=sys.stderr)
         # Fallback: si algo falla, devolvemos el best_pick base
-        # ... (el código fallback sigue igual)
         fallback = IABootOut(
             match=f"{pred.home_team} vs {pred.away_team}",
             league=pred.league,
@@ -1203,7 +1202,6 @@ def iaboot_predict(inp: PredictIn, request: Request):
     # --------------------------------------------------------
     txt = ""
     if resp.choices and resp.choices[0].message.content:
-        # El JSON está aquí
         txt = resp.choices[0].message.content
 
     try:
@@ -1215,14 +1213,73 @@ def iaboot_predict(inp: PredictIn, request: Request):
         # Forzamos el fallback de nuevo, porque no podemos confiar en la respuesta.
         raise ValueError("AI returned non-parseable JSON.")
 
+    # ====================================================================
+    # LÓGICA DE INYECCIÓN DE PORCENTAJES FALTANTES
+    # ====================================================================
+
+    # Mapear los porcentajes ya calculados del modelo base (pred.probs)
+    # Usamos los nombres de los equipos del INPUT para generar las claves de mapeo
+    home_name = pred.home_team
+    away_name = pred.away_team
+
+    prob_map = {
+        # Mapeos 1X2
+        f"Gana Local": pred.probs.get("home_win_pct", 0), # Nombre genérico para el pick 1
+        f"Gana Visitante": pred.probs.get("away_win_pct", 0), # Nombre genérico para el pick 2
+        "Empate": pred.probs.get("draw_pct", 0), 
+        
+        # Mapeos Goles/BTTS (Usando nombres comunes)
+        "Over 2.5": pred.probs.get("over_2_5_pct", 0),
+        "Menos de 2.5": 100.0 - pred.probs.get("over_2_5_pct", 0),
+        "Sí": pred.probs.get("btts_pct", 0), # Usado para BTTS - Sí
+    }
+    
+    # Crear un mapa de alternativas de nombres que la IA podría usar
+    alt_names = {
+        f"{home_name} gana": prob_map["Gana Local"],
+        f"{away_name} gana": prob_map["Gana Visitante"],
+        f"Over/Under 2.5": prob_map["Over 2.5"], # Si la IA usa 'Over/Under 2.5' como market
+        f"Ambos equipos anotan": prob_map["Sí"], # Si la IA usa 'Ambos equipos anotan' como market
+    }
+    prob_map.update(alt_names)
+    
     # Normalizar a Pydantic
     picks = []
     for p in (payload.get("picks") or []):
+        # 1. Obtener los valores que la IA envió (pueden ser 0 o None si se omiten)
+        p_pct_ia = float(p.get("prob_pct", 0) or 0)
+        p_conf_ia = float(p.get("confidence", 0) or 0)
+
+        # 2. Intentar buscar la probabilidad base usando la selección y el mercado.
+        
+        # CLAVE DE BÚSQUEDA 1: Solo el nombre de la Selección (ej. "Over 2.5", "Empate")
+        selection_key = p.get('selection', '').strip()
+        
+        # CLAVE DE BÚSQUEDA 2: Si es un pick 1X2, usar el formato genérico
+        if p.get('market', '') in ["Resultado", "1X2", "Ganador"]:
+            if selection_key == f"{home_name} gana": 
+                selection_key = "Gana Local"
+            elif selection_key == f"{away_name} gana":
+                selection_key = "Gana Visitante"
+                
+        p_pct_base = prob_map.get(selection_key, 0)
+        
+        # 3. Decidir el porcentaje final
+        p_pct_final = p_pct_ia
+        if p_pct_final < 0.01: # Si la IA falló o devolvió 0, inyectamos el valor base
+            p_pct_final = p_pct_base
+        
+        # 4. Decidir la Confianza Final (usa el porcentaje final, ajustado a la escala 0-100)
+        p_conf_final = p_conf_ia
+        if p_conf_final < 0.01:
+            # Usamos la fórmula simple de confianza del modelo base si la IA la omitió
+            p_conf_final = max(0.0, min(100.0, abs(p_pct_final - 50.0) * 2.0))
+            
         picks.append(IABootLeg(
             market=p.get("market",""),
             selection=p.get("selection",""),
-            prob_pct=float(p.get("prob_pct",0) or 0),
-            confidence=float(p.get("confidence",0) or 0),
+            prob_pct=round(p_pct_final, 2),        # Usar el valor inyectado/corregido
+            confidence=round(p_conf_final, 2),     # Usar el valor inyectado/corregido
             rationale=p.get("rationale",""),
         ))
 
