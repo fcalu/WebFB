@@ -39,7 +39,7 @@ CACHE_TTL_SECONDS    = int(os.getenv("CACHE_TTL_SECONDS", "600")) # 10 min
 EXPOSE_DEBUG         = os.getenv("EXPOSE_DEBUG", "0") == "1"      # anexa campo "debug" en output
 # === IA Boot flags ===
 IABOOT_ON = os.getenv("IABOOT_ON", "0") == "1"
-IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-3.5-turbo")
+IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-4o")
 IABOOT_TEMPERATURE = float(os.getenv("IABOOT_TEMPERATURE", "0.2"))
 # --------------------------------------------------------------------------------------
 # Configuración básica
