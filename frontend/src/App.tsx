@@ -5,7 +5,6 @@ import ParlayDrawer from "./components/ParlayDrawer";
 import BuilderDrawer from "./components/BuilderDrawer";
 import NavDrawer from "./components/NavDrawer";
 import IABootDrawer from "./components/IABootDrawer";
-
 import InstallBanner from "./components/InstallBanner";
 import PremiumDrawer from "./components/PremiumDrawer";
 
@@ -65,8 +64,6 @@ const toFloat = (v: any) => {
   const x = Number(s);
   return Number.isFinite(x) ? x : undefined;
 };
-
-const pct = (n?: number) => (n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`);
 
 /* ===== Estilos base (dark) ===== */
 const page: React.CSSProperties = {
@@ -132,20 +129,19 @@ const pill: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-/* ===== Cabecera minimal ===== */
 /* ===== Cabecera con hamburguesa ===== */
 function Header({
   onOpenMenu,
   onOpenHistory,
   onOpenParlay,
   onOpenBuilder,
-  onOpenIABoot, // <-- AÑADIDO
+  onOpenIABoot,
 }: {
   onOpenMenu: () => void;
   onOpenHistory: () => void;
   onOpenParlay: () => void;
   onOpenBuilder: () => void;
-  onOpenIABoot: () => void; // <-- AÑADIDO
+  onOpenIABoot: () => void;
 }) {
   return (
     <div
@@ -174,7 +170,6 @@ function Header({
             cursor: "pointer",
           }}
         >
-          {/* ícono hamburguesa simple */}
           <div style={{ display: "grid", gap: 4 }}>
             <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
             <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
@@ -258,19 +253,25 @@ function Header({
         <button
           onClick={onOpenIABoot}
           title="IA Boot"
-          style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 14px",
-                  borderRadius:12, border:"1px solid rgba(255,255,255,.12)",
-                  color:"#d1d5db", background:"rgba(255,255,255,.06)" }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.12)",
+            color: "#d1d5db",
+            background: "rgba(255,255,255,.06)",
+          }}
         >
           🤖 IA Boot
         </button>
-
       </div>
     </div>
   );
 }
 
-/* ===== Editor de cuotas (acepta punto/coma) ===== */
+/* ===== Editor de cuotas ===== */
 function OddsEditor({
   odds,
   setOdds,
@@ -307,12 +308,9 @@ function OddsEditor({
     <div style={{ ...panel, marginTop: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ ...pill }}>👛 Cuotas (opcional)</div>
-        <div style={{ fontSize: 12, opacity: 0.75 }}>
-          Sugerencia: ingrésalas ~5 horas antes para mayor precisión.
-        </div>
+        <div style={{ fontSize: 12, opacity: 0.75 }}>Sugerencia: ingrésalas ~5 horas antes para mayor precisión.</div>
       </div>
       <div
-      
         style={{
           marginTop: 10,
           display: "grid",
@@ -380,6 +378,7 @@ export default function App() {
   const [premiumOpen, setPremiumOpen] = useState(false);
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
+  const [premiumKey, setPremiumKey] = useState(() => localStorage.getItem("fm_premium_key") || "");
 
   // Parley + Historial + Stake
   const [parlayOpen, setParlayOpen] = useState(false);
@@ -388,6 +387,17 @@ export default function App() {
   const [builderOpen, setBuilderOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
 
+  // Guardado de clave premium
+  const handleKeySubmit = (newKey: string) => {
+    const trimmedKey = newKey.trim();
+    setPremiumKey(trimmedKey);
+    if (trimmedKey) {
+      localStorage.setItem("fm_premium_key", trimmedKey);
+    } else {
+      localStorage.removeItem("fm_premium_key");
+      alert("Acceso Premium revocado. Se ha restablecido el acceso Freemium.");
+    }
+  };
 
   useEffect(() => {
     fetch(`${API_BASE}/leagues`)
@@ -425,10 +435,10 @@ export default function App() {
     setErr("");
     setData(null);
     try {
-      const body: any = { league, home_team: home, away_team: away }; // no envíes 'expert' al backend
-        if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) {
-          body.odds = odds;
-        }
+      const body: any = { league, home_team: home, away_team: away }; // no enviamos 'expert'
+      if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) {
+        body.odds = odds;
+      }
       const res = await fetch(`${API_BASE}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -438,31 +448,35 @@ export default function App() {
       const json: PredictResponse = await res.json();
       setData(json);
 
+      // Log al historial (best-pick)
       try {
-  // log al historial (sin stake por ahora)
-  await fetch(`${API_BASE}/history/log`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ts: Math.floor(Date.now()/1000),
-      league,
-      home,
-      away,
-      market: json.best_pick.market,
-      selection: json.best_pick.selection,
-      prob_pct: json.best_pick.prob_pct,
-      odd:
-        json.best_pick.market === "1X2"
-          ? json.best_pick.selection === "1" ? odds["1"] : json.best_pick.selection === "2" ? odds["2"] : odds["X"]
-          : json.best_pick.market === "Over 2.5" ? odds.O2_5
-          : json.best_pick.market === "BTTS" && json.best_pick.selection === "Sí" ? odds.BTTS_YES
-          : undefined,
-      stake: null,
-    }),
-  });
-} catch {}
-
-
+        await fetch(`${API_BASE}/history/log`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ts: Math.floor(Date.now() / 1000),
+            league,
+            home,
+            away,
+            market: json.best_pick.market,
+            selection: json.best_pick.selection,
+            prob_pct: json.best_pick.prob_pct,
+            odd:
+              json.best_pick.market === "1X2"
+                ? json.best_pick.selection === "1"
+                  ? odds["1"]
+                  : json.best_pick.selection === "2"
+                  ? odds["2"]
+                  : odds["X"]
+                : json.best_pick.market === "Over 2.5"
+                ? odds.O2_5
+                : json.best_pick.market === "BTTS" && json.best_pick.selection === "Sí"
+                ? odds.BTTS_YES
+                : undefined,
+            stake: null,
+          }),
+        });
+      } catch {}
     } catch (e: any) {
       setErr(e?.message || "Error al predecir.");
     } finally {
@@ -537,15 +551,15 @@ export default function App() {
           onOpenHistory={() => setHistOpen(true)}
           onOpenParlay={() => setParlayOpen(true)}
           onOpenBuilder={() => setBuilderOpen(true)}
-          onOpenIABoot={() => setIaOpen(true)}  // <-- AÑADIDO
-          
+          onOpenIABoot={() => setIaOpen(true)} {/* <-- correcto en JSX */}
         />
-        <div style={{ display:"flex", gap:8, alignItems:"center", marginTop:8 }}>
-        <label style={{ fontSize:12, opacity:.8 }}>
-          <input type="checkbox" checked={expert} onChange={e=>setExpert(e.target.checked)} />
-          &nbsp;Modo experto (ver detalles POISSON/DC)
-        </label>
-      </div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+          <label style={{ fontSize: 12, opacity: 0.8 }}>
+            <input type="checkbox" checked={expert} onChange={(e) => setExpert(e.target.checked)} />
+            &nbsp;Modo experto (ver detalles POISSON/DC)
+          </label>
+        </div>
 
         {/* Paso 1: Selección */}
         <div style={{ ...panel }}>
@@ -558,11 +572,7 @@ export default function App() {
           <div className="g3" style={{ marginTop: 12 }}>
             <div>
               <div style={label}>Liga</div>
-              <select
-                value={league}
-                onChange={(e) => setLeague(e.target.value)}
-                style={input}
-              >
+              <select value={league} onChange={(e) => setLeague(e.target.value)} style={input}>
                 <option value="">— Selecciona liga —</option>
                 {leagues.map((l) => (
                   <option key={l} value={l}>
@@ -647,6 +657,7 @@ export default function App() {
             <SkeletonCard />
           </div>
         )}
+
         <NavDrawer
           open={navOpen}
           onClose={() => setNavOpen(false)}
@@ -654,58 +665,54 @@ export default function App() {
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenHistory={() => setHistOpen(true)}
         />
+
         {/* Parley & Historial (sliders) */}
-        <ParlayDrawer
-          open={parlayOpen}
-          onClose={() => setParlayOpen(false)}
-          API_BASE={API_BASE}
-          isPremium={true /* o tu flag real */}
-        />
+        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} API_BASE={API_BASE} isPremium={true} />
 
         <BuilderDrawer
-        open={builderOpen}
-        onClose={() => setBuilderOpen(false)}
-        API_BASE={API_BASE}
-        league={league}
-        home={home}
-        away={away}
-        odds={odds}
-      />
-      <IABootDrawer
-        open={iaOpen}
-        onClose={() => setIaOpen(false)}
-        API_BASE={API_BASE}
-        league={league}
-        home={home}
-        away={away}
-        odds={odds}
-      />
-      <button
-  onClick={() => setPremiumOpen(true)}
-  title="Premium"
-  style={{
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "10px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,.12)",
-    color: "#d1d5db",
-    background: "rgba(255,255,255,.06)",
-  }}
->
-  👑 Premium
-</button>
+          open={builderOpen}
+          onClose={() => setBuilderOpen(false)}
+          API_BASE={API_BASE}
+          league={league}
+          home={home}
+          away={away}
+          odds={odds}
+        />
 
-      <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
-      <PremiumDrawer open={premiumOpen} onClose={() => setPremiumOpen(false)} />
-      {/* <-- AQUÍ el banner PWA */}
-<InstallBanner />
+        <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} />
 
-        {/* Resultado (UNA sola tarjeta pro) + barra de acciones */}
+        <button
+          onClick={() => setPremiumOpen(true)}
+          title="Premium"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.12)",
+            color: "#d1d5db",
+            background: "rgba(255,255,255,.06)",
+          }}
+        >
+          👑 Premium
+        </button>
+
+        <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
+
+        <PremiumDrawer
+          open={premiumOpen}
+          onClose={() => setPremiumOpen(false)}
+          onKeySubmit={handleKeySubmit}
+          currentKey={premiumKey}
+        />
+
+        {/* Banner PWA */}
+        <InstallBanner />
+
+        {/* Resultado + acciones */}
         {data && !loading && (
           <>
-            {/* Barra de acciones para el pick: Stake */}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
               <button
                 onClick={() => setStakeOpen(true)}
@@ -722,18 +729,21 @@ export default function App() {
               </button>
 
               <button
-              onClick={async ()=>{
-                const body:any = { league, home_team: home, away_team: away };
-                if (odds["1"]||odds.X||odds["2"]||odds.O2_5||odds.BTTS_YES) body.odds = odds;
-                await fetch(`${API_BASE}/alerts/value-pick`, {
-                  method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body)
-                });
-                alert("Enviado (si cumple umbrales).");
-              }}
-              style={{ ...pill, cursor:"pointer" }}
-              title="Enviar a Telegram si es value pick"
-            >📣 Alerta</button>
-
+                onClick={async () => {
+                  const body: any = { league, home_team: home, away_team: away };
+                  if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
+                  await fetch(`${API_BASE}/alerts/value-pick`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                  });
+                  alert("Enviado (si cumple umbrales).");
+                }}
+                style={{ ...pill, cursor: "pointer" }}
+                title="Enviar a Telegram si es value pick"
+              >
+                📣 Alerta
+              </button>
             </div>
 
             <div style={{ marginTop: 12 }}>

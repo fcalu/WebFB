@@ -11,6 +11,7 @@ type Props = {
   home?: string;
   away?: string;
   odds?: Odds;
+  premiumKey: string; // <-- AÑADIDO: Clave Premium para enviar al backend
 };
 
 type ApiLeagues = { leagues: string[] };
@@ -86,7 +87,7 @@ const card: React.CSSProperties = {
   padding: 14,
 };
 
-export default function IABootDrawer({ open, onClose, API_BASE, league, home, away, odds }: Props) {
+export default function IABootDrawer({ open, onClose, API_BASE, league, home, away, odds, premiumKey }: Props) {
   const [leagues, setLeagues] = useState<string[]>([]);
   const [leagueSel, setLeagueSel] = useState<string>(league || "");
   const [teams, setTeams] = useState<string[]>([]);
@@ -148,6 +149,7 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
         league: leagueSel,
         home_team: homeSel,
         away_team: awaySel,
+        premium_key: premiumKey, // <-- AÑADIDO: Envía la clave aquí!
       };
       if (odds && (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES)) body.odds = odds;
 
@@ -156,16 +158,21 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error(await r.text());
+      
+      if (!r.ok) {
+        // Manejo específico del error 401
+        if (r.status === 401) {
+            throw new Error("Acceso denegado (401). Tu Clave Premium es inválida o faltante. Ingresa la clave correcta o suscríbete.");
+        }
+        // Capturar el error general del backend
+        const errorText = await r.text();
+        throw new Error(errorText);
+      }
+      
       const j: IABootResponse = await r.json();
       setResp(j);
     } catch (e: any) {
-      // Si el error es una excepción lanzada por ValueError en el backend:
-      if (e?.message && e.message.includes("AI returned non-parseable JSON")) {
-         setErr("Error: La IA devolvió un formato incorrecto. Intenta de nuevo.");
-      } else {
-         setErr(e?.message || "Error generando IA Boot.");
-      }
+      setErr(e?.message || "Error generando IA Boot.");
     } finally {
       setLoading(false);
     }
@@ -284,7 +291,6 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
                   ANÁLISIS COMPLETO (IA BOOT)
                 </div>
                 <div style={{ fontSize: 16, lineHeight: 1.6, opacity: 0.95, color: '#f3f4f6' }}>
-                  {/* El summary va aquí, con un tamaño y espaciado mejorado */}
                   {resp.summary || resp.explanation}
                 </div>
               </div>
