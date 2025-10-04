@@ -1,29 +1,31 @@
+// PremiumDrawer.tsx
 import React, { useState } from "react";
-import { loadStripe } from "@stripe/stripe-js"; // Stripe (cliente)
+import { loadStripe } from "@stripe/stripe-js";
+import type { Stripe as StripeJs } from "@stripe/stripe-js"; // <-- Tipado correcto
 
 // ===== CONFIG =====
 // Clave pública desde variables de entorno (Vite/Vercel)
 const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string;
 if (!STRIPE_PUBLISHABLE_KEY) {
-  // Opcional: consola para detectar si falta la variable
   console.warn("Falta VITE_STRIPE_PUBLISHABLE_KEY en el entorno del frontend.");
 }
-const stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY);
+// ¡El promise tipado evita el error de TS con redirectToCheckout!
+const stripePromise: Promise<StripeJs | null> = loadStripe(STRIPE_PUBLISHABLE_KEY);
 
 // Reemplaza por tus IDs reales de Stripe (Dashboard → Products → Prices)
 const PLANS = [
   { id: "price_SEMANAL_ID", name: "SEMANAL", price: 70.0, interval: "Semanal" },
   { id: "price_MENSUAL_ID", name: "MENSUAL", price: 130.0, interval: "Mensual" },
   { id: "price_ANUAL_ID", name: "ANUAL", price: 1300.0, interval: "Anual" },
-];
+] as const;
 type Plan = typeof PLANS[number];
 
 // ===== TIPOS DE PROPS =====
 type Props = {
   open: boolean;
   onClose: () => void;
-  API_BASE: string;          // ej: import.meta.env.VITE_API_BASE_URL
-  currentKey: string;        // clave premium actual guardada
+  API_BASE: string;                 // ej: import.meta.env.VITE_API_BASE_URL
+  currentKey: string;               // clave premium actual guardada
   onKeySubmit: (key: string) => void; // para guardar o revocar clave
 };
 
@@ -131,11 +133,11 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
         throw new Error("Error al crear la sesión de pago: " + t);
       }
 
-      const data = await r.json() as { session_id?: string; session_url?: string };
+      const data = (await r.json()) as { session_id?: string; session_url?: string };
 
       // Flujo recomendado: redirectToCheckout con session_id
       if (data.session_id) {
-        const stripe = await stripePromise;
+        const stripe = await stripePromise; // StripeJs | null
         if (!stripe) throw new Error("Stripe no se cargó en el cliente.");
         const { error } = await stripe.redirectToCheckout({ sessionId: data.session_id });
         if (error) throw new Error(error.message);

@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-// Las importaciones de archivos locales se han ELIMINADO para evitar conflictos
-// con las funciones unificadas (placeholders) definidas al final del archivo.
 
 /* ===== Tipos mínimos ===== */
 type ApiLeagues = { leagues: string[] };
@@ -42,8 +40,7 @@ type PredictResponse = {
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
-// CORRECCIÓN DE API_BASE: Se define como una constante fija ya que las variables de entorno
-// en este contexto son difíciles de resolver. Se asume que el backend está en localhost:8000 si no se define.
+// CORRECCIÓN DE API_BASE: Se define como una constante fija para evitar errores de compilación.
 const API_BASE: string = "http://localhost:8000";
 
 /* ===== Helpers ===== */
