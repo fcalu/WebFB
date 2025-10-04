@@ -42,11 +42,9 @@ type PredictResponse = {
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
-// CORRECCIÓN DE COMPATIBILIDAD: Se usa process.env para que la compilación no falle.
-const API_BASE: string =
-  (typeof process !== "undefined" &&
-    (process.env as any).VITE_API_BASE_URL?.replace(/\/$/, "")) ||
-  "http://localhost:8000";
+// CORRECCIÓN DE API_BASE: Se define como una constante fija ya que las variables de entorno
+// en este contexto son difíciles de resolver. Se asume que el backend está en localhost:8000 si no se define.
+const API_BASE: string = "http://localhost:8000";
 
 /* ===== Helpers ===== */
 const toFloat = (v: any) => {
@@ -649,6 +647,7 @@ function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, currentKey }: any
         </div>
     );
 }
+
 
 // --- APP PRINCIPAL ---
 export default function App() {
