@@ -1,24 +1,4 @@
-// PremiumDrawer.tsx
 import React, { useState } from "react";
-import { loadStripe } from "@stripe/stripe-js";
-import type { Stripe as StripeJs } from "@stripe/stripe-js"; // <-- Tipado correcto
-
-// ===== CONFIG =====
-// Clave pública desde variables de entorno (Vite/Vercel)
-const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string;
-if (!STRIPE_PUBLISHABLE_KEY) {
-  console.warn("Falta VITE_STRIPE_PUBLISHABLE_KEY en el entorno del frontend.");
-}
-// ¡El promise tipado evita el error de TS con redirectToCheckout!
-const stripePromise: Promise<StripeJs | null> = loadStripe(STRIPE_PUBLISHABLE_KEY);
-
-// Reemplaza por tus IDs reales de Stripe (Dashboard → Products → Prices)
-const PLANS = [
-  { id: "price_SEMANAL_ID", name: "SEMANAL", price: 70.0, interval: "Semanal" },
-  { id: "price_MENSUAL_ID", name: "MENSUAL", price: 130.0, interval: "Mensual" },
-  { id: "price_ANUAL_ID", name: "ANUAL", price: 1300.0, interval: "Anual" },
-] as const;
-type Plan = typeof PLANS[number];
 
 // ===== TIPOS DE PROPS =====
 type Props = {
@@ -28,6 +8,13 @@ type Props = {
   currentKey: string;               // clave premium actual guardada
   onKeySubmit: (key: string) => void; // para guardar o revocar clave
 };
+
+// Reemplaza por tus IDs reales de Stripe (Dashboard → Products → Prices)
+const PLANS = [
+  { id: "price_SEMANAL_ID", name: "SEMANAL", price: 70.0, interval: "Semanal" },
+  { id: "price_MENSUAL_ID", name: "MENSUAL", price: 130.0, interval: "Mensual" },
+  { id: "price_ANUAL_ID", name: "ANUAL", price: 1300.0, interval: "Anual" },
+];
 
 // ===== ESTILOS =====
 const overlay: React.CSSProperties = {
@@ -115,8 +102,8 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
     }
   };
 
-  // Crear sesión en backend y redirigir a Stripe Checkout
-  const handleCheckout = async (plan: Plan) => {
+  // Crear sesión en backend y redirigir a Stripe (URL directa del backend)
+  const handleCheckout = async (plan: { id: string; name: string }) => {
     const userEmail = window.prompt("Email para la suscripción (Stripe):");
     if (!userEmail) return;
 
@@ -125,7 +112,10 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
       const r = await fetch(`${API_BASE}/create-checkout-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ price_id: plan.id, user_email: userEmail }),
+        body: JSON.stringify({
+          price_id: plan.id,
+          user_email: userEmail,
+        }),
       });
 
       if (!r.ok) {
@@ -133,24 +123,14 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
         throw new Error("Error al crear la sesión de pago: " + t);
       }
 
-      const data = (await r.json()) as { session_id?: string; session_url?: string };
-
-      // Flujo recomendado: redirectToCheckout con session_id
-      if (data.session_id) {
-        const stripe = await stripePromise; // StripeJs | null
-        if (!stripe) throw new Error("Stripe no se cargó en el cliente.");
-        const { error } = await stripe.redirectToCheckout({ sessionId: data.session_id });
-        if (error) throw new Error(error.message);
-        return;
+      // El backend DEBE devolver { session_url: "https://checkout.stripe.com/..." }
+      const data = (await r.json()) as { session_url?: string };
+      if (!data.session_url) {
+        throw new Error("El backend no devolvió session_url.");
       }
 
-      // Fallback: si tu backend devuelve URL directa
-      if (data.session_url) {
-        window.location.href = data.session_url;
-        return;
-      }
-
-      throw new Error("El backend no devolvió session_id ni session_url.");
+      // Redirección directa sin usar stripe.redirectToCheckout
+      window.location.href = data.session_url;
     } catch (e: any) {
       alert("Fallo el pago: " + e.message);
     } finally {
