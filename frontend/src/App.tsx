@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 
 // ✅ Componentes reales (ya no placeholders)
 import BestPickPro from "./components/BestPickPro";
@@ -12,7 +12,7 @@ import PremiumDrawer from "./components/PremiumDrawer";
 import StakeModal from "./components/StakeModal";
 import BetHistoryDrawer from "./components/BetHistoryDrawer";
 
-/* ===== Tipos mínimos ===== */
+/* ===== Tipos ===== */
 type ApiLeagues = { leagues: string[] };
 type ApiTeams = { teams: string[] };
 
@@ -39,24 +39,28 @@ type PredictResponse = {
     corners_mlp_pred: number;
   };
   best_pick: {
-    market: string;
-    selection: string;
+    market: "1X2" | "Over 2.5" | "BTTS" | string;
+    selection: "1" | "X" | "2" | "Sí" | "No" | string;
     prob_pct: number;
-    confidence: number;
+    confidence: number; // 0..1
     reasons: string[];
   };
   summary: string;
-  debug?: Record<string, any>;
+  debug?: Record<string, unknown>;
 };
 
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
-// Puedes cambiarlo por import.meta.env.VITE_API_BASE_URL si quieres
-const API_BASE: string = "http://localhost:8000";
+/* ===== Config (entorno) ===== */
+// Lee de Vite (VITE_API_BASE_URL) con fallback a window.__API_BASE__ y localhost.
+const API_BASE: string =
+  (typeof window !== "undefined" && (window as any).__API_BASE__) ||
+  (import.meta as any).env?.VITE_API_BASE_URL ||
+  "http://localhost:8000";
 
 /* ===== Helpers ===== */
-const toFloat = (v: any) => {
+const toFloat = (v: unknown) => {
   if (v === undefined || v === null || v === "") return undefined;
   const s = String(v).replace(",", ".").trim();
   const x = Number(s);
@@ -64,6 +68,68 @@ const toFloat = (v: any) => {
 };
 
 const pct = (n?: number) => (n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`);
+
+function classNames(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
+/** Guarda estado en localStorage con SSR-safe. */
+function useLocalStorageState<T>(key: string, initial: T) {
+  const [val, setVal] = useState<T>(() => {
+    try {
+      if (typeof window === "undefined") return initial;
+      const raw = window.localStorage.getItem(key);
+      return raw ? (JSON.parse(raw) as T) : initial;
+    } catch {
+      return initial;
+    }
+  });
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") window.localStorage.setItem(key, JSON.stringify(val));
+    } catch {}
+  }, [key, val]);
+  return [val, setVal] as const;
+}
+
+/** Fetch JSON tipado con AbortController. Adjunta Premium-Key si existe. */
+async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: string } = {}): Promise<T> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), 20_000); // 20s timeout
+  try {
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+      ...(opts.headers || {}),
+    };
+    if (opts.premiumKey) (headers as Record<string, string>)["X-Premium-Key"] = opts.premiumKey;
+
+    const res = await fetch(url, { ...opts, headers, signal: controller.signal });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+/** Mapea best_pick -> odd ingresada por usuario. Robusto a variaciones. */
+function oddFromBestPick(best: PredictResponse["best_pick"], odds: Odds): number | undefined {
+  const market = best.market;
+  const sel = best.selection;
+  if (market === "1X2") {
+    if (sel === "1") return odds["1"]; // Local
+    if (sel === "2") return odds["2"]; // Visitante
+    if (sel === "X") return odds["X"]; // Empate
+  }
+  if (market === "Over 2.5") return odds.O2_5;
+  if (market === "BTTS") {
+    const yesish = sel.toLowerCase();
+    if (["sí", "si", "yes", "y"].includes(yesish)) return odds.BTTS_YES;
+  }
+  return undefined;
+}
 
 /* ===== Estilos base (dark) ===== */
 const page: React.CSSProperties = {
@@ -88,7 +154,7 @@ const panel: React.CSSProperties = {
   padding: 14,
 };
 
-const label: React.CSSProperties = {
+const labelCss: React.CSSProperties = {
   color: "#a5b4fc",
   fontSize: 12,
   marginBottom: 6,
@@ -96,7 +162,7 @@ const label: React.CSSProperties = {
   letterSpacing: 0.3,
 };
 
-const input: React.CSSProperties = {
+const inputCss: React.CSSProperties = {
   width: "100%",
   background: "#0f172a",
   color: "white",
@@ -173,7 +239,7 @@ function Header({
           }}
         >
           {/* ícono hamburguesa simple */}
-          <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ display: "grid", gap: 4 }} aria-hidden>
             <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
             <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
             <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
@@ -192,13 +258,12 @@ function Header({
             fontSize: 24,
             fontWeight: 900,
           }}
+          aria-hidden
         >
           ⚽
         </div>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 900, lineHeight: 1 }}>
-            FootyMines · IA Predictor
-          </div>
+          <div style={{ fontSize: 22, fontWeight: 900, lineHeight: 1 }}>FootyMines · IA Predictor</div>
           <div style={{ opacity: 0.8, fontSize: 13 }}>Predicción clara para usuarios finales</div>
         </div>
       </div>
@@ -305,12 +370,14 @@ function OddsEditor({
 }) {
   const Field = ({ k, labelText, ph }: { k: keyof Odds; labelText: string; ph: string }) => (
     <div>
-      <div style={label}>{labelText}</div>
+      <div style={labelCss}>{labelText}</div>
       <input
         type="text"
         inputMode="decimal"
+        aria-label={`Cuota ${labelText}`}
         placeholder={ph}
-        style={input}
+        style={inputCss}
+        pattern="^[0-9]+([\.,][0-9]+)?$"
         value={rawOdds[k] ?? ""}
         onChange={(e) => setRawOdds({ ...rawOdds, [k]: e.target.value })}
         onBlur={(e) => {
@@ -328,9 +395,7 @@ function OddsEditor({
     <div style={{ ...panel, marginTop: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ ...pill }}>👛 Cuotas (opcional)</div>
-        <div style={{ fontSize: 12, opacity: 0.75 }}>
-          Sugerencia: ingrésalas ~5 horas antes para mayor precisión.
-        </div>
+        <div style={{ fontSize: 12, opacity: 0.75 }}>Sugerencia: ingrésalas ~5 horas antes para mayor precisión.</div>
       </div>
       <div
         style={{
@@ -373,7 +438,7 @@ function SkeletonCard() {
     borderRadius: 8,
   } as React.CSSProperties;
   return (
-    <div style={{ ...panel }}>
+    <div style={{ ...panel }} role="status" aria-live="polite" aria-busy>
       <style>{`@keyframes shimmer{0%{background-position:-200px 0}100%{background-position:400px 0}}`}</style>
       <div style={{ ...sk, width: "50%", marginBottom: 8 }} />
       <div style={{ ...sk, width: "80%", height: 26, marginBottom: 8 }} />
@@ -387,6 +452,7 @@ function SkeletonCard() {
 
 // --- APP PRINCIPAL ---
 export default function App() {
+  // ⚙️ Estado
   const [leagues, setLeagues] = useState<string[]>([]);
   const [league, setLeague] = useState("");
   const [teams, setTeams] = useState<string[]>([]);
@@ -400,7 +466,7 @@ export default function App() {
   const [premiumOpen, setPremiumOpen] = useState(false);
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
-  const [premiumKey, setPremiumKey] = useState(() => localStorage.getItem("fm_premium_key") || "");
+  const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
   // Parley + Historial + Stake
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
@@ -408,17 +474,22 @@ export default function App() {
   const [builderOpen, setBuilderOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
 
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   // Guardar/Revocar clave premium
-  const handleKeySubmit = (newKey: string) => {
+  const handleKeySubmit = useCallback((newKey: string) => {
     const trimmedKey = newKey.trim();
     setPremiumKey(trimmedKey);
-    if (trimmedKey) {
-      localStorage.setItem("fm_premium_key", trimmedKey);
-    } else {
-      localStorage.removeItem("fm_premium_key");
+    if (!trimmedKey) {
       alert("Acceso Premium revocado. Se ha restablecido el acceso Freemium.");
     }
-  };
+  }, [setPremiumKey]);
 
   // Feedback de retorno de Stripe
   useEffect(() => {
@@ -437,53 +508,80 @@ export default function App() {
     }
   }, []);
 
+  // Cargar ligas (con abort y manejo de errores silencioso)
   useEffect(() => {
-    fetch(`${API_BASE}/leagues`)
-      .then((r) => r.json())
-      .then((d: ApiLeagues) => setLeagues(d.leagues ?? []))
-      .catch(() => setLeagues([]));
-  }, []);
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const d = await fetchJSON<ApiLeagues>(`${API_BASE}/leagues`, { signal: controller.signal as any, premiumKey });
+        if (!mounted.current) return;
+        setLeagues(d.leagues ?? []);
+      } catch (e) {
+        if ((e as any)?.name === "AbortError") return;
+        setLeagues([]);
+      }
+    })();
+    return () => controller.abort();
+  }, [premiumKey]);
 
+  // Cargar equipos por liga
   useEffect(() => {
     setHome("");
     setAway("");
     setData(null);
     setErr("");
     if (!league) return setTeams([]);
-    fetch(`${API_BASE}/teams?league=${encodeURIComponent(league)}`)
-      .then((r) => r.json())
-      .then((d: ApiTeams) => setTeams(d.teams ?? []))
-      .catch(() => setErr("No pude cargar equipos."));
-  }, [league]);
+
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const d = await fetchJSON<ApiTeams>(`${API_BASE}/teams?league=${encodeURIComponent(league)}`, {
+          signal: controller.signal as any,
+          premiumKey,
+        });
+        if (!mounted.current) return;
+        setTeams(d.teams ?? []);
+      } catch (e) {
+        if ((e as any)?.name === "AbortError") return;
+        setErr("No pude cargar equipos.");
+      }
+    })();
+    return () => controller.abort();
+  }, [league, premiumKey]);
 
   const canPredict = league && home && away && home !== away;
 
-  const filteredHome = useMemo(() => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())), [teams, home]);
-  const filteredAway = useMemo(() => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())), [teams, away]);
+  const filteredHome = useMemo(
+    () => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())),
+    [teams, home]
+  );
+  const filteredAway = useMemo(
+    () => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())),
+    [teams, away]
+  );
 
   async function onPredict() {
-    if (!canPredict) return;
+    if (!canPredict || loading) return;
     setLoading(true);
     setErr("");
     setData(null);
     try {
       const body: any = { league, home_team: home, away_team: away };
-      if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) {
-        body.odds = odds;
-      }
-      const res = await fetch(`${API_BASE}/predict`, {
+      if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
+
+      const json = await fetchJSON<PredictResponse>(`${API_BASE}/predict`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        premiumKey,
       });
-      if (!res.ok) throw new Error(await res.text());
-      const json: PredictResponse = await res.json();
+      if (!mounted.current) return;
       setData(json);
 
+      // Log a historial (best-effort)
       try {
-        await fetch(`${API_BASE}/history/log`, {
+        const odd = oddFromBestPick(json.best_pick, odds);
+        await fetchJSON(`${API_BASE}/history/log`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ts: Math.floor(Date.now() / 1000),
             league,
@@ -492,20 +590,10 @@ export default function App() {
             market: json.best_pick.market,
             selection: json.best_pick.selection,
             prob_pct: json.best_pick.prob_pct,
-            odd:
-              json.best_pick.market === "1X2"
-                ? json.best_pick.selection === "1"
-                  ? odds["1"]
-                  : json.best_pick.selection === "2"
-                  ? odds["2"]
-                  : odds["X"]
-                : json.best_pick.market === "Over 2.5"
-                ? odds.O2_5
-                : json.best_pick.market === "BTTS" && json.best_pick.selection === "Sí"
-                ? odds.BTTS_YES
-                : undefined,
+            odd,
             stake: null,
           }),
+          premiumKey,
         });
       } catch {}
     } catch (e: any) {
@@ -519,15 +607,7 @@ export default function App() {
   const stakeDefaults = useMemo(() => {
     if (!data) return null;
     const prob01 = (data.best_pick?.prob_pct ?? 0) / 100;
-
-    let odd: number | undefined;
-    if (data.best_pick.market === "1X2") {
-      odd = data.best_pick.selection === "1" ? odds["1"] : data.best_pick.selection === "2" ? odds["2"] : odds["X"];
-    } else if (data.best_pick.market === "Over 2.5") {
-      odd = odds.O2_5;
-    } else if (data.best_pick.market === "BTTS" && data.best_pick.selection === "Sí") {
-      odd = odds.BTTS_YES;
-    }
+    const odd = oddFromBestPick(data.best_pick, odds);
 
     const humanMarket =
       data.best_pick.market === "1X2"
@@ -567,6 +647,7 @@ export default function App() {
           background: rgba(11,16,32,.9); backdrop-filter: blur(6px);
           border-top: 1px solid rgba(255,255,255,.12);
           padding: 10px 14px; display:flex; gap:10px; align-items:center; justify-content:space-between;
+          z-index: 50;
         }
       `}</style>
 
@@ -597,8 +678,13 @@ export default function App() {
 
           <div className="g3" style={{ marginTop: 12 }}>
             <div>
-              <div style={label}>Liga</div>
-              <select value={league} onChange={(e) => setLeague(e.target.value)} style={input}>
+              <div style={labelCss}>Liga</div>
+              <select
+                value={league}
+                onChange={(e) => setLeague(e.target.value)}
+                style={inputCss}
+                aria-label="Selecciona liga"
+              >
                 <option value="">— Selecciona liga —</option>
                 {leagues.map((l) => (
                   <option key={l} value={l}>
@@ -608,13 +694,14 @@ export default function App() {
               </select>
             </div>
             <div>
-              <div style={label}>Equipo local</div>
+              <div style={labelCss}>Equipo local</div>
               <input
                 placeholder="Escribe para buscar…"
                 value={home}
                 onChange={(e) => setHome(e.target.value)}
                 list="home_list"
-                style={input}
+                style={inputCss}
+                aria-label="Equipo local"
               />
               <datalist id="home_list">
                 {filteredHome.map((t) => (
@@ -623,13 +710,14 @@ export default function App() {
               </datalist>
             </div>
             <div>
-              <div style={label}>Equipo visitante</div>
+              <div style={labelCss}>Equipo visitante</div>
               <input
                 placeholder="Escribe para buscar…"
                 value={away}
                 onChange={(e) => setAway(e.target.value)}
                 list="away_list"
-                style={input}
+                style={inputCss}
+                aria-label="Equipo visitante"
               />
               <datalist id="away_list">
                 {filteredAway.map((t) => (
@@ -644,7 +732,7 @@ export default function App() {
         <OddsEditor odds={odds} setOdds={setOdds} rawOdds={rawOdds} setRawOdds={setRawOdds} />
 
         {/* CTA fijo inferior */}
-        <div className="fixedbar">
+        <div className="fixedbar" aria-live="polite">
           <div style={{ fontSize: 12, opacity: 0.8 }}>
             {canPredict ? "Listo para calcular" : "Selecciona liga y ambos equipos"}
           </div>
@@ -656,6 +744,7 @@ export default function App() {
               opacity: !canPredict || loading ? 0.6 : 1,
               cursor: !canPredict || loading ? "not-allowed" : "pointer",
             }}
+            aria-busy={loading}
           >
             {loading ? "Calculando…" : "Calcular ahora"}
           </button>
@@ -664,6 +753,7 @@ export default function App() {
         {/* Errores */}
         {err && (
           <div
+            role="alert"
             style={{
               background: "rgba(239,68,68,.12)",
               border: "1px solid rgba(239,68,68,.35)",
@@ -697,7 +787,7 @@ export default function App() {
           open={parlayOpen}
           onClose={() => setParlayOpen(false)}
           API_BASE={API_BASE}
-          isPremium={true}
+          isPremium={!!premiumKey}
           premiumKey={premiumKey}
         />
 
@@ -775,12 +865,16 @@ export default function App() {
                 onClick={async () => {
                   const body: any = { league, home_team: home, away_team: away };
                   if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
-                  await fetch(`${API_BASE}/alerts/value-pick`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
-                  });
-                  alert("Enviado (si cumple umbrales).");
+                  try {
+                    await fetchJSON(`${API_BASE}/alerts/value-pick`, {
+                      method: "POST",
+                      body: JSON.stringify(body),
+                      premiumKey,
+                    });
+                    alert("Enviado (si cumple umbrales).");
+                  } catch (e: any) {
+                    alert(e?.message || "No se pudo enviar la alerta.");
+                  }
                 }}
                 style={{ ...pill, cursor: "pointer" }}
                 title="Enviar a Telegram si es value pick"
