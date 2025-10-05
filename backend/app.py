@@ -1,4 +1,15 @@
 # backend/app.py
+import os
+import time
+import glob
+import math
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from scipy.stats import poisson
 import sqlite3
 from fastapi.responses import PlainTextResponse
 import sys
@@ -14,18 +25,6 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 # === IA Boot (OpenAI) ===
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
-
-import os
-import time
-import glob
-import math
-from typing import Dict, List, Optional, Tuple
-
-import numpy as np
-import pandas as pd
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from scipy.stats import poisson
 # (Opcional) calibración Platt con sklearn; si no está, seguimos sin calibrar
 try:
     from sklearn.linear_model import LogisticRegression
