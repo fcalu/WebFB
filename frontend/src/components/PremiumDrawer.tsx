@@ -1,22 +1,21 @@
 import React, { useState } from "react";
 
-// ===== TIPOS DE PROPS =====
 type Props = {
   open: boolean;
   onClose: () => void;
-  API_BASE: string;                 // ej: import.meta.env.VITE_API_BASE_URL
-  currentKey: string;               // clave premium actual guardada
-  onKeySubmit: (key: string) => void; // para guardar o revocar clave
+  API_BASE: string;
+  currentKey: string;
+  isPremium?: boolean;
+  premiumKey?: string;
+  onKeySubmit: (key: string) => void;
 };
 
-// Reemplaza por tus IDs reales de Stripe (Dashboard → Products → Prices)
 const PLANS = [
   { id: "price_SEMANAL_ID", name: "SEMANAL", price: 70.0, interval: "Semanal" },
   { id: "price_MENSUAL_ID", name: "MENSUAL", price: 130.0, interval: "Mensual" },
   { id: "price_ANUAL_ID", name: "ANUAL", price: 1300.0, interval: "Anual" },
 ];
 
-// ===== ESTILOS =====
 const overlay: React.CSSProperties = {
   position: "fixed",
   inset: 0,
@@ -26,7 +25,6 @@ const overlay: React.CSSProperties = {
   zIndex: 60,
   backdropFilter: "blur(5px)",
 };
-
 const card: React.CSSProperties = {
   width: "min(900px, 92vw)",
   background: "rgba(17,24,39,.98)",
@@ -38,7 +36,6 @@ const card: React.CSSProperties = {
   maxHeight: "90vh",
   overflowY: "auto",
 };
-
 const pill: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -51,7 +48,6 @@ const pill: React.CSSProperties = {
   fontSize: 12,
   cursor: "pointer",
 };
-
 const inputStyle: React.CSSProperties = {
   width: "100%",
   background: "#0f172a",
@@ -62,7 +58,6 @@ const inputStyle: React.CSSProperties = {
   outline: "none",
   fontSize: 14,
 };
-
 const buttonPrimary: React.CSSProperties = {
   background: "linear-gradient(135deg,#7c3aed,#5b21b6)",
   color: "#fff",
@@ -73,7 +68,6 @@ const buttonPrimary: React.CSSProperties = {
   cursor: "pointer",
   transition: "opacity 0.2s",
 };
-
 const planCardStyle: React.CSSProperties = {
   padding: 20,
   borderRadius: 16,
@@ -84,13 +78,11 @@ const planCardStyle: React.CSSProperties = {
   minWidth: "200px",
 };
 
-// ===== COMPONENTE =====
 export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, currentKey }: Props) {
   const [inputKey, setInputKey] = useState(currentKey);
   const [loading, setLoading] = useState(false);
   const isPremiumActive = currentKey.trim().length > 5;
 
-  // Guardar / verificar clave manual
   const handleKeySubmit = () => {
     const trimmed = inputKey.trim();
     onKeySubmit(trimmed);
@@ -102,7 +94,6 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
     }
   };
 
-  // Crear sesión en backend y redirigir a Stripe (URL directa del backend)
   const handleCheckout = async (plan: { id: string; name: string }) => {
     const userEmail = window.prompt("Email para la suscripción (Stripe):");
     if (!userEmail) return;
@@ -112,10 +103,7 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
       const r = await fetch(`${API_BASE}/create-checkout-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          price_id: plan.id,
-          user_email: userEmail,
-        }),
+        body: JSON.stringify({ price_id: plan.id, user_email: userEmail }),
       });
 
       if (!r.ok) {
@@ -123,13 +111,10 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
         throw new Error("Error al crear la sesión de pago: " + t);
       }
 
-      // El backend DEBE devolver { session_url: "https://checkout.stripe.com/..." }
       const data = (await r.json()) as { session_url?: string };
-      if (!data.session_url) {
-        throw new Error("El backend no devolvió session_url.");
-      }
+      if (!data.session_url) throw new Error("El backend no devolvió session_url.");
 
-      // Redirección directa sin usar stripe.redirectToCheckout
+      // ✅ Redirección directa (sin redirectToCheckout) = sin error de tipos
       window.location.href = data.session_url;
     } catch (e: any) {
       alert("Fallo el pago: " + e.message);
@@ -143,7 +128,6 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
   return (
     <div style={overlay} onClick={onClose}>
       <div style={card} onClick={(e) => e.stopPropagation()}>
-        {/* HEADER */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
           <h2 style={{ fontSize: 24, fontWeight: 900 }}>
             👑 Acceso Premium{" "}
@@ -152,9 +136,7 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
           <button onClick={onClose} style={{ ...pill, opacity: 0.8 }}>Cerrar ✕</button>
         </div>
 
-        {/* BODY */}
         <div style={{ display: "flex", gap: 25, flexWrap: "wrap" }}>
-          {/* Columna beneficios */}
           <div style={{ flex: 2, minWidth: "300px" }}>
             <p style={{ opacity: 0.9, marginTop: 8, fontSize: 16, fontWeight: 600 }}>
               Desbloquea el poder del análisis profundo y las herramientas Pro:
@@ -168,12 +150,11 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
             </ul>
           </div>
 
-          {/* Columna planes + clave */}
           <div style={{ flex: 3, minWidth: "350px" }}>
-            {/* Planes */}
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 15, color: "#a5b4fc" }}>
               1. Elige tu Plan de Suscripción
             </h3>
+
             <div style={{ display: "flex", gap: 15, flexWrap: "wrap", marginBottom: 25 }}>
               {PLANS.map((plan) => (
                 <div key={plan.id} style={planCardStyle}>
@@ -185,18 +166,17 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
                     Precio por {plan.interval.toLowerCase()}
                   </p>
 
-                  <button
-                    onClick={() => handleCheckout(plan)}
-                    disabled={loading}
-                    style={{ ...buttonPrimary, padding: "10px 16px", fontSize: 14, opacity: loading ? 0.6 : 1 }}
-                  >
-                    {loading ? "Cargando Pago..." : "Empezar prueba"}
-                  </button>
+                    <button
+                      onClick={() => handleCheckout(plan)}
+                      disabled={loading}
+                      style={{ ...buttonPrimary, padding: "10px 16px", fontSize: 14, opacity: loading ? 0.6 : 1 }}
+                    >
+                      {loading ? "Cargando Pago..." : "Empezar prueba"}
+                    </button>
                 </div>
               ))}
             </div>
 
-            {/* Clave manual */}
             <div style={{ borderTop: "1px solid rgba(255,255,255,.1)", paddingTop: 15 }}>
               <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 10, color: "#a5b4fc" }}>
                 2. Ingresar Clave de Acceso
@@ -221,7 +201,7 @@ export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, cu
 
                 {isPremiumActive && (
                   <button
-                    onClick={() => onKeySubmit("")} // Revocar
+                    onClick={() => onKeySubmit("")}
                     style={{ ...pill, background: "none", borderColor: "#ef4444", color: "#fecaca", fontWeight: 700 }}
                   >
                     🗑️ Revocar Clave

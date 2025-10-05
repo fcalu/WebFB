@@ -9,6 +9,7 @@ type Props = {
   home: string;
   away: string;
   odds?: Record<string, number | undefined>;
+  premiumKey?: string;
 };
 
 type ApiLeagues = { leagues: string[] };

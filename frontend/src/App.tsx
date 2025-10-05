@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 
+// ✅ Componentes reales (ya no placeholders)
+import BestPickPro from "./components/BestPickPro";
+import ErrorBoundary from "./components/ErrorBoundary";
+import ParlayDrawer from "./components/ParlayDrawer";
+import BuilderDrawer from "./components/BuilderDrawer";
+import NavDrawer from "./components/NavDrawer";
+import IABootDrawer from "./components/IABootDrawer";
+import InstallBanner from "./components/InstallBanner";
+import PremiumDrawer from "./components/PremiumDrawer";
+import StakeModal from "./components/StakeModal";
+import BetHistoryDrawer from "./components/BetHistoryDrawer";
+
 /* ===== Tipos mínimos ===== */
 type ApiLeagues = { leagues: string[] };
 type ApiTeams = { teams: string[] };
@@ -40,7 +52,7 @@ type PredictResponse = {
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
-// CORRECCIÓN DE API_BASE: Se define como una constante fija para evitar errores de compilación.
+// Puedes cambiarlo por import.meta.env.VITE_API_BASE_URL si quieres
 const API_BASE: string = "http://localhost:8000";
 
 /* ===== Helpers ===== */
@@ -124,14 +136,14 @@ function Header({
   onOpenParlay,
   onOpenBuilder,
   onOpenIABoot,
-  onOpenPremium, 
+  onOpenPremium,
 }: {
   onOpenMenu: () => void;
   onOpenHistory: () => void;
   onOpenParlay: () => void;
   onOpenBuilder: () => void;
-  onOpenIABoot: () => void; 
-  onOpenPremium: () => void; 
+  onOpenIABoot: () => void;
+  onOpenPremium: () => void;
 }) {
   return (
     <div
@@ -244,9 +256,16 @@ function Header({
         <button
           onClick={onOpenIABoot}
           title="IA Boot"
-          style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 14px",
-                   borderRadius:12, border:"1px solid rgba(255,255,255,.12)",
-                   color:"#d1d5db", background:"rgba(255,255,255,.06)" }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.12)",
+            color: "#d1d5db",
+            background: "rgba(255,255,255,.06)",
+          }}
         >
           🤖 IA Boot
         </button>
@@ -262,7 +281,7 @@ function Header({
             border: "1px solid rgba(255,255,255,.12)",
             color: "#d1d5db",
             background: "linear-gradient(90deg, #7c3aed, #5b21b6)",
-            fontWeight: 800
+            fontWeight: 800,
           }}
         >
           👑 Premium
@@ -272,7 +291,7 @@ function Header({
   );
 }
 
-/* ===== Editor de cuotas (acepta punto/coma) ===== */
+/* ===== Editor de cuotas ===== */
 function OddsEditor({
   odds,
   setOdds,
@@ -314,7 +333,6 @@ function OddsEditor({
         </div>
       </div>
       <div
-        
         style={{
           marginTop: 10,
           display: "grid",
@@ -367,285 +385,6 @@ function SkeletonCard() {
   );
 }
 
-// --- COMPONENTES AUXILIARES (UNIFICADOS) ---
-
-// Componente BestPickPro - Placeholder
-function BestPickPro(props: any) {
-    if (props.data) {
-        const pick = props.data.best_pick;
-        return (
-            <div style={{ ...panel, padding: 20, textAlign: 'center', backgroundColor: 'rgba(34, 197, 94, 0.1)' }}>
-                <div style={{ fontSize: 18, fontWeight: 700 }}>Pick Principal: {pick.market} — {pick.selection}</div>
-                <div style={{ fontSize: 14, opacity: 0.8, marginTop: 5 }}>Probabilidad: {pick.prob_pct.toFixed(2)}%</div>
-            </div>
-        );
-    }
-    return <div style={{ ...panel, padding: 20, textAlign: 'center' }}>Resultado de Pick Profesional (Esperando datos)</div>;
-}
-
-// Componente ErrorBoundary - Placeholder
-function ErrorBoundary({ children }: { children: React.ReactNode }) {
-    return <>{children}</>;
-}
-
-// Componente StakeModal - Placeholder
-function StakeModal(props: any) {
-    if (!props.open) return null;
-    return <div style={{ ...panel, position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 70, color: 'white' }}>Calculadora de Stake (Modal)</div>;
-}
-
-// Componente NavDrawer - Placeholder
-function NavDrawer(props: any) {
-    if (!props.open) return null;
-    return <div style={{ ...panel, position: 'fixed', inset: 0, width: '300px', background: '#111827', zIndex: 70, color: 'white' }}>Menú Principal</div>;
-}
-
-// Componente InstallBanner - Placeholder
-function InstallBanner() {
-    return null;
-}
-
-// Componente BetHistoryDrawer - Placeholder
-function BetHistoryDrawer(props: any) {
-    if (!props.open) return null;
-    return <div style={{ ...panel, position: 'fixed', inset: 0, background: '#111827', zIndex: 65, color: 'white' }}>Historial de Apuestas</div>;
-}
-
-// Componente ParlayDrawer - Placeholder
-function ParlayDrawer(props: any) {
-    if (!props.open) return null;
-    return <div style={{ ...panel, position: 'fixed', inset: 0, background: '#111827', zIndex: 65, color: 'white' }}>Generador de Parley (Premium: {props.premiumKey ? 'Sí' : 'No'})</div>;
-}
-
-// Componente BuilderDrawer - Placeholder
-function BuilderDrawer(props: any) {
-    if (!props.open) return null;
-    return <div style={{ ...panel, position: 'fixed', inset: 0, background: '#111827', zIndex: 65, color: 'white' }}>Generador de Selección (Premium: {props.premiumKey ? 'Sí' : 'No'})</div>;
-}
-
-// Componente IABootDrawer - Placeholder
-function IABootDrawer(props: any) {
-    if (!props.open) return null;
-    return <div style={{ ...panel, position: 'fixed', inset: 0, background: '#111827', zIndex: 65, color: 'white' }}>Predicción IA Boot (Premium: {props.premiumKey ? 'Sí' : 'No'})</div>;
-}
-
-// Componente PremiumDrawer (Gestión de Monetización)
-function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, currentKey }: any) {
-    const [inputKey, setInputKey] = useState(currentKey);
-    const [loading, setLoading] = useState(false);
-    const isPremiumActive = currentKey.trim().length > 5;
-
-    const handleKeySubmit = () => {
-        onKeySubmit(inputKey.trim());
-        if (inputKey.trim() === currentKey.trim()) {
-             alert(isPremiumActive ? "Clave verificada. ¡Acceso Premium activo!" : "Clave guardada. Verifica tu acceso en el siguiente pronóstico.");
-        }
-    };
-    
-    // NOTA: Esta lógica se conecta al endpoint /create-checkout-session de FastAPI
-    const handleCheckout = async (plan: any) => {
-        const userEmail = prompt("Por favor, ingresa tu dirección de email para la suscripción (usado por Stripe):");
-        if (!userEmail) return;
-
-        setLoading(true);
-
-        try {
-            const r = await fetch(API_BASE + '/create-checkout-session', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ price_id: plan.id, user_email: userEmail }),
-            });
-            
-            if (!r.ok) {
-                const errorText = await r.text();
-                throw new Error('Error al crear la sesión de pago: ' + errorText);
-            }
-
-            const { session_url } = await r.json(); 
-            
-            // CORRECCIÓN FINAL: Simplemente se redirige si se obtiene la URL
-            if (session_url) {
-                window.location.href = session_url;
-            } else {
-                 throw new Error('El backend no devolvió una URL de pago válida.');
-            }
-
-        } catch (e) {
-            alert("Fallo el pago: " + (e as Error).message);
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    const PLANS = [
-        { id: 'price_SEMANAL_ID', name: 'SEMANAL', price: 70.00, interval: 'Semanal' },
-        { id: 'price_MENSUAL_ID', name: 'MENSUAL', price: 130.00, interval: 'Mensual' },
-        { id: 'price_ANUAL_ID', name: 'ANUAL', price: 1300.00, interval: 'Anual' },
-    ];
-    const buttonPrimary: React.CSSProperties = {
-        background:"linear-gradient(135deg,#7c3aed,#5b21b6)",
-        color:"#fff", border:"none", borderRadius:12, padding:"12px 18px",
-        fontWeight:900, cursor:"pointer", transition: 'opacity 0.2s'
-    };
-    const planCardStyle: React.CSSProperties = {
-        padding: 20,
-        borderRadius: 16,
-        border: "1px solid rgba(255,255,255,.2)",
-        textAlign: 'center',
-        background: 'rgba(255,255,255,.05)',
-        flex: 1,
-        minWidth: '200px'
-    };
-    const inputStyleLocal: React.CSSProperties = {
-        width: "100%",
-        background: "#0f172a",
-        color: "white",
-        border: "1px solid rgba(255,255,255,.18)",
-        borderRadius: 8,
-        padding: "10px 14px",
-        outline: "none",
-        fontSize: 14
-    };
-    const overlayStyleLocal: React.CSSProperties = {
-        position: "fixed", inset: 0, background: "rgba(0,0,0,.65)",
-        display: "grid", placeItems: "center", zIndex: 60,
-        backdropFilter: 'blur(5px)'
-    };
-    const cardStyleLocal: React.CSSProperties = {
-        width: "min(900px, 92vw)", 
-        background: "rgba(17,24,39,.98)",
-        border: "1px solid rgba(255,255,255,.15)", 
-        borderRadius: 16, 
-        padding: 20,
-        color: "#e5e7eb", 
-        boxShadow: "0 30px 80px rgba(0,0,0,.45)",
-        maxHeight: '90vh',
-        overflowY: 'auto'
-    };
-    const pillLocal: React.CSSProperties = {
-        display:"inline-flex", alignItems:"center", gap:8, padding:"8px 12px",
-        borderRadius:999, background:"rgba(255,255,255,.06)",
-        border:"1px solid rgba(255,255,255,.12)", color:"#d1d5db", fontSize:12, cursor: 'pointer'
-    };
-
-
-    if (!open) return null;
-
-    return (
-        <div style={overlayStyleLocal} onClick={onClose}>
-            <div style={cardStyleLocal} onClick={(e) => e.stopPropagation()}>
-                
-                {/* ENCABEZADO */}
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center", marginBottom: 15}}>
-                    <h2 style={{fontSize:24, fontWeight:900}}>
-                        👑 Acceso Premium 
-                        {isPremiumActive && <span style={{ marginLeft: 10, color: '#22c55e', fontSize: 16 }}>(ACTIVO)</span>}
-                    </h2>
-                    <button onClick={onClose} style={{...pillLocal, opacity: 0.8}}>Cerrar ✕</button>
-                </div>
-
-                {/* CONTENIDO PRINCIPAL */}
-                <div style={{ display: 'flex', gap: 25, flexWrap: 'wrap' }}>
-                    
-                    {/* COLUMNA 1: BENEFICIOS */}
-                    <div style={{ flex: 2, minWidth: '300px' }}>
-                        <p style={{opacity:.9, marginTop:8, fontSize: 16, fontWeight: 600}}>
-                            Desbloquea el poder del análisis profundo y las herramientas Pro:
-                        </p>
-                        <ul style={{marginTop:12, lineHeight:2, paddingLeft: 20, listStyleType: 'disc', color: '#d1d5db'}}>
-                            <li>• **IA Boot:** Análisis completo con justificación narrativa.</li>
-                            <li>• **Parley Builder:** Generador de combinadas con Valor Esperado (EV).</li>
-                            <li>• **Selección Combinada:** Picks avanzados (Córners, BTTS, Over/Under).</li>
-                            <li>• **Gestión Pro:** Stake recomendado (Kelly) y registro de tickets.</li>
-                            <li>• **Experiencia Pura:** Sin anuncios + soporte prioritario.</li>
-                        </ul>
-                    </div>
-                    
-                    {/* COLUMNA 2: PLANES Y CLAVE */}
-                    <div style={{ flex: 3, minWidth: '350px' }}>
-
-                        {/* SECCIÓN DE PLANES DE PAGO */}
-                        <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 15, color: '#a5b4fc' }}>
-                            1. Elige tu Plan de Suscripción
-                        </h3>
-                        
-                        <div style={{ display: 'flex', gap: 15, flexWrap: 'wrap', marginBottom: 25 }}>
-                            {PLANS.map((plan) => (
-                                <div key={plan.id} style={planCardStyle}>
-                                    <h4 style={{ color: '#f3f4f6', fontWeight: 800, fontSize: 18 }}>{plan.interval}</h4>
-                                    <p style={{ fontSize: 26, fontWeight: 900, margin: '8px 0', color: '#7c3aed' }}>
-                                        MXN {plan.price.toFixed(2)}
-                                    </p>
-                                    <p style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>Precio por {plan.interval.toLowerCase()}</p>
-                                    
-                                    <button 
-                                        onClick={() => handleCheckout(plan)}
-                                        disabled={loading}
-                                        style={{
-                                            ...buttonPrimary, 
-                                            padding: '10px 16px', 
-                                            fontSize: 14,
-                                            opacity: loading ? 0.6 : 1
-                                        }}
-                                    >
-                                        {loading ? "Cargando Pago..." : "Empezar prueba"}
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* SECCIÓN DE CLAVE DE ACCESO MANUAL */}
-                        <div style={{ borderTop: '1px solid rgba(255,255,255,.1)', paddingTop: 15 }}>
-                            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 10, color: '#a5b4fc' }}>
-                                2. Ingresar Clave de Acceso
-                            </h3>
-
-                            <input
-                                type="text"
-                                placeholder="Pega aquí tu Clave Premium..."
-                                value={inputKey}
-                                onChange={(e) => setInputKey(e.target.value)}
-                                style={inputStyleLocal}
-                            />
-
-                            <div style={{display:"flex", gap:10, marginTop:15, flexWrap:"wrap"}}>
-                                <button
-                                    style={{
-                                        ...buttonPrimary, 
-                                        opacity: !inputKey ? 0.6 : 1,
-                                    }}
-                                    onClick={handleKeySubmit}
-                                    disabled={!inputKey}
-                                >
-                                    {isPremiumActive ? 'Guardar y Verificar' : 'Guardar Clave de Acceso'}
-                                </button>
-                                
-                                {isPremiumActive && (
-                                    <button
-                                        onClick={() => onKeySubmit('')} // Limpia la clave
-                                        style={{...pillLocal, background: 'none', borderColor: '#ef4444', color: '#fecaca', fontWeight: 700}}
-                                    >
-                                        🗑️ Revocar Clave
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* FOOTER DE CONFIANZA */}
-                        <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: 'center'}}>
-                            <span style={pillLocal}>⚡ 3 días gratis (al pagar)</span>
-                            <span style={pillLocal}>🔒 Cancela cuando quieras</span>
-                        </div>
-                        
-                    </div>
-                </div>
-                
-            </div>
-        </div>
-    );
-}
-
-
 // --- APP PRINCIPAL ---
 export default function App() {
   const [leagues, setLeagues] = useState<string[]>([]);
@@ -661,7 +400,7 @@ export default function App() {
   const [premiumOpen, setPremiumOpen] = useState(false);
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
-  const [premiumKey, setPremiumKey] = useState(() => localStorage.getItem('fm_premium_key') || '');
+  const [premiumKey, setPremiumKey] = useState(() => localStorage.getItem("fm_premium_key") || "");
   // Parley + Historial + Stake
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
@@ -669,33 +408,34 @@ export default function App() {
   const [builderOpen, setBuilderOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
 
-   // NUEVO: Función para manejar el guardado/borrado de la clave
+  // Guardar/Revocar clave premium
   const handleKeySubmit = (newKey: string) => {
     const trimmedKey = newKey.trim();
     setPremiumKey(trimmedKey);
     if (trimmedKey) {
-      localStorage.setItem('fm_premium_key', trimmedKey);
-      // Opcional: Forzar una verificación al backend para confirmar la clave
+      localStorage.setItem("fm_premium_key", trimmedKey);
     } else {
-      localStorage.removeItem('fm_premium_key');
+      localStorage.removeItem("fm_premium_key");
       alert("Acceso Premium revocado. Se ha restablecido el acceso Freemium.");
     }
   };
-  
-  // NUEVO: Manejo de redirección de Stripe
+
+  // Feedback de retorno de Stripe
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const success = urlParams.get('success');
-    const canceled = urlParams.get('canceled');
+    const success = urlParams.get("success");
+    const canceled = urlParams.get("canceled");
 
-    if (success === 'true') {
-      alert('¡Pago exitoso! En breve recibirás tu Clave Premium por correo electrónico. Ingresa la clave en el modal Premium para activarlo.');
-      window.history.replaceState(null, '', window.location.pathname);
-    } else if (canceled === 'true') {
-      alert('El pago fue cancelado. Puedes intentarlo de nuevo.');
-      window.history.replaceState(null, '', window.location.pathname);
+    if (success === "true") {
+      alert(
+        "¡Pago exitoso! En breve recibirás tu Clave Premium por correo electrónico. Ingresa la clave en el modal Premium para activarlo."
+      );
+      window.history.replaceState(null, "", window.location.pathname);
+    } else if (canceled === "true") {
+      alert("El pago fue cancelado. Puedes intentarlo de nuevo.");
+      window.history.replaceState(null, "", window.location.pathname);
     }
-  }, []); 
+  }, []);
 
   useEffect(() => {
     fetch(`${API_BASE}/leagues`)
@@ -718,14 +458,8 @@ export default function App() {
 
   const canPredict = league && home && away && home !== away;
 
-  const filteredHome = useMemo(
-    () => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())),
-    [teams, home]
-  );
-  const filteredAway = useMemo(
-    () => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())),
-    [teams, away]
-  );
+  const filteredHome = useMemo(() => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())), [teams, home]);
+  const filteredAway = useMemo(() => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())), [teams, away]);
 
   async function onPredict() {
     if (!canPredict) return;
@@ -733,10 +467,10 @@ export default function App() {
     setErr("");
     setData(null);
     try {
-      const body: any = { league, home_team: home, away_team: away }; // no envíes 'expert' al backend
-        if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) {
-          body.odds = odds;
-        }
+      const body: any = { league, home_team: home, away_team: away };
+      if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) {
+        body.odds = odds;
+      }
       const res = await fetch(`${API_BASE}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -747,30 +481,33 @@ export default function App() {
       setData(json);
 
       try {
-  // log al historial (sin stake por ahora)
-  await fetch(`${API_BASE}/history/log`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ts: Math.floor(Date.now()/1000),
-      league,
-      home,
-      away,
-      market: json.best_pick.market,
-      selection: json.best_pick.selection,
-      prob_pct: json.best_pick.prob_pct,
-      odd:
-        json.best_pick.market === "1X2"
-          ? json.best_pick.selection === "1" ? odds["1"] : json.best_pick.selection === "2" ? odds["2"] : odds["X"]
-          : json.best_pick.market === "Over 2.5" ? odds.O2_5
-          : json.best_pick.market === "BTTS" && json.best_pick.selection === "Sí" ? odds.BTTS_YES
-          : undefined,
-      stake: null,
-    }),
-  });
-} catch {}
-
-
+        await fetch(`${API_BASE}/history/log`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ts: Math.floor(Date.now() / 1000),
+            league,
+            home,
+            away,
+            market: json.best_pick.market,
+            selection: json.best_pick.selection,
+            prob_pct: json.best_pick.prob_pct,
+            odd:
+              json.best_pick.market === "1X2"
+                ? json.best_pick.selection === "1"
+                  ? odds["1"]
+                  : json.best_pick.selection === "2"
+                  ? odds["2"]
+                  : odds["X"]
+                : json.best_pick.market === "Over 2.5"
+                ? odds.O2_5
+                : json.best_pick.market === "BTTS" && json.best_pick.selection === "Sí"
+                ? odds.BTTS_YES
+                : undefined,
+            stake: null,
+          }),
+        });
+      } catch {}
     } catch (e: any) {
       setErr(e?.message || "Error al predecir.");
     } finally {
@@ -778,20 +515,14 @@ export default function App() {
     }
   }
 
-  // ======== Datos por defecto para el modal de Stake =========
+  // Defaults para modal de stake
   const stakeDefaults = useMemo(() => {
     if (!data) return null;
     const prob01 = (data.best_pick?.prob_pct ?? 0) / 100;
 
-    // elegir cuota usada según el mercado
     let odd: number | undefined;
     if (data.best_pick.market === "1X2") {
-      odd =
-        data.best_pick.selection === "1"
-          ? odds["1"]
-          : data.best_pick.selection === "2"
-          ? odds["2"]
-          : odds["X"];
+      odd = data.best_pick.selection === "1" ? odds["1"] : data.best_pick.selection === "2" ? odds["2"] : odds["X"];
     } else if (data.best_pick.market === "Over 2.5") {
       odd = odds.O2_5;
     } else if (data.best_pick.market === "BTTS" && data.best_pick.selection === "Sí") {
@@ -846,15 +577,15 @@ export default function App() {
           onOpenParlay={() => setParlayOpen(true)}
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenIABoot={() => setIaOpen(true)}
-          onOpenPremium={() => setPremiumOpen(true)} 
-          
+          onOpenPremium={() => setPremiumOpen(true)}
         />
-        <div style={{ display:"flex", gap:8, alignItems:"center", marginTop:8 }}>
-        <label style={{ fontSize:12, opacity:.8 }}>
-          <input type="checkbox" checked={expert} onChange={e=>setExpert(e.target.checked)} />
-          &nbsp;Modo experto (ver detalles POISSON/DC)
-        </label>
-      </div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+          <label style={{ fontSize: 12, opacity: 0.8 }}>
+            <input type="checkbox" checked={expert} onChange={(e) => setExpert(e.target.checked)} />
+            &nbsp;Modo experto (ver detalles POISSON/DC)
+          </label>
+        </div>
 
         {/* Paso 1: Selección */}
         <div style={{ ...panel }}>
@@ -867,11 +598,7 @@ export default function App() {
           <div className="g3" style={{ marginTop: 12 }}>
             <div>
               <div style={label}>Liga</div>
-              <select
-                value={league}
-                onChange={(e) => setLeague(e.target.value)}
-                style={input}
-              >
+              <select value={league} onChange={(e) => setLeague(e.target.value)} style={input}>
                 <option value="">— Selecciona liga —</option>
                 {leagues.map((l) => (
                   <option key={l} value={l}>
@@ -956,6 +683,8 @@ export default function App() {
             <SkeletonCard />
           </div>
         )}
+
+        {/* Drawers */}
         <NavDrawer
           open={navOpen}
           onClose={() => setNavOpen(false)}
@@ -963,13 +692,13 @@ export default function App() {
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenHistory={() => setHistOpen(true)}
         />
-        {/* Parley & Historial (sliders) */}
+
         <ParlayDrawer
           open={parlayOpen}
           onClose={() => setParlayOpen(false)}
           API_BASE={API_BASE}
-          isPremium={true /* o tu flag real */}
-          premiumKey={premiumKey} 
+          isPremium={true}
+          premiumKey={premiumKey}
         />
 
         <BuilderDrawer
@@ -980,8 +709,9 @@ export default function App() {
           home={home}
           away={away}
           odds={odds}
-          premiumKey={premiumKey} 
+          premiumKey={premiumKey}
         />
+
         <IABootDrawer
           open={iaOpen}
           onClose={() => setIaOpen(false)}
@@ -990,8 +720,9 @@ export default function App() {
           home={home}
           away={away}
           odds={odds}
-          premiumKey={premiumKey} 
+          premiumKey={premiumKey}
         />
+
         <button
           onClick={() => setPremiumOpen(true)}
           title="Premium"
@@ -1010,18 +741,21 @@ export default function App() {
         </button>
 
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
-        <PremiumDrawer open={premiumOpen} onClose={() => setPremiumOpen(false)} 
-          onKeySubmit={handleKeySubmit} 
+
+        <PremiumDrawer
+          open={premiumOpen}
+          onClose={() => setPremiumOpen(false)}
+          onKeySubmit={handleKeySubmit}
           currentKey={premiumKey}
           API_BASE={API_BASE}
         />
-        {/* <-- AQUÍ el banner PWA */}
+
+        {/* Banner PWA */}
         <InstallBanner />
 
-        {/* Resultado (UNA sola tarjeta pro) + barra de acciones */}
+        {/* Resultado */}
         {data && !loading && (
           <>
-            {/* Barra de acciones para el pick: Stake */}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
               <button
                 onClick={() => setStakeOpen(true)}
@@ -1038,18 +772,21 @@ export default function App() {
               </button>
 
               <button
-              onClick={async ()=>{
-                const body:any = { league, home_team: home, away_team: away };
-                if (odds["1"]||odds.X||odds["2"]||odds.O2_5||odds.BTTS_YES) body.odds = odds;
-                await fetch(`${API_BASE}/alerts/value-pick`, {
-                  method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body)
-                });
-                alert("Enviado (si cumple umbrales).");
-              }}
-              style={{ ...pill, cursor:"pointer" }}
-              title="Enviar a Telegram si es value pick"
-            >📣 Alerta</button>
-
+                onClick={async () => {
+                  const body: any = { league, home_team: home, away_team: away };
+                  if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
+                  await fetch(`${API_BASE}/alerts/value-pick`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                  });
+                  alert("Enviado (si cumple umbrales).");
+                }}
+                style={{ ...pill, cursor: "pointer" }}
+                title="Enviar a Telegram si es value pick"
+              >
+                📣 Alerta
+              </button>
             </div>
 
             <div style={{ marginTop: 12 }}>
@@ -1060,7 +797,6 @@ export default function App() {
           </>
         )}
 
-        {/* Modal de Stake */}
         {stakeDefaults && (
           <StakeModal
             open={stakeOpen}
