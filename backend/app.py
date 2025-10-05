@@ -1147,3 +1147,118 @@ def iaboot_predict(inp: PredictIn, request: Request):
 @app.post("/iaboot/suggest", response_model=IABootOut)
 def iaboot_suggest(inp: PredictIn, request: Request):
     return iaboot_predict(inp, request)
+
+# =========================
+# RUTAS BÁSICAS PARA FRONT
+# =========================
+from fastapi.responses import JSONResponse
+from fastapi import Header
+
+@app.get("/", response_class=PlainTextResponse)
+def root():
+    return "FootyMines API online"
+
+@app.get("/__health", response_class=PlainTextResponse)
+def health():
+    return "ok"
+
+@app.get("/leagues")
+def get_leagues():
+    return {"leagues": sorted(LEAGUES.keys())}
+
+@app.get("/teams")
+def get_teams(league: str):
+    if league not in LEAGUES:
+        raise HTTPException(status_code=400, detail="Liga no encontrada")
+    return {"teams": LEAGUES[league].teams}
+
+@app.post("/predict", response_model=PredictOut)
+def predict_endpoint(
+    inp: PredictIn,
+    request: Request,
+    premium_key_hdr: Optional[str] = Header(default=None, alias="X-Premium-Key")
+):
+    # Si quisieras gatear también predict:
+    # check_premium(inp.premium_key or premium_key_hdr, request)
+    return predict_sync(inp)
+
+# =========================
+# HISTORIAL (SQLite)
+# =========================
+class HistoryLogIn(BaseModel):
+    ts: Optional[int] = None
+    league: str
+    home: str
+    away: str
+    market: str
+    selection: str
+    prob_pct: Optional[float] = None
+    odd: Optional[float] = None
+    stake: Optional[float] = None
+
+@app.post("/history/log")
+def history_log(item: HistoryLogIn):
+    ts = item.ts or int(time.time())
+    conn = _db()
+    conn.execute(
+        """INSERT INTO history(ts, league, home, away, market, selection, prob_pct, odd, stake)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (ts, item.league, item.home, item.away, item.market, item.selection,
+         item.prob_pct, item.odd, item.stake)
+    )
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+@app.get("/history/list")
+def history_list(limit: int = 50):
+    conn = _db()
+    rows = conn.execute(
+        "SELECT id, ts, league, home, away, market, selection, prob_pct, odd, stake, result "
+        "FROM history ORDER BY ts DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    out = [dict(r) for r in rows]
+    return {"items": out}
+
+# =========================
+# ALERTAS (stub amigable)
+# =========================
+class ValuePickIn(BaseModel):
+    league: str
+    home_team: str
+    away_team: str
+    odds: Optional[Dict[str, float]] = None
+    premium_key: Optional[str] = None
+
+@app.post("/alerts/value-pick")
+def alerts_value_pick(inp: ValuePickIn, request: Request):
+    # Gatea por si quieres que sólo Premium las use
+    try:
+        check_premium(inp.premium_key, request)
+    except HTTPException:
+        # Si prefieres que en modo freemium no truene el botón, puedes comentar lo anterior.
+        raise
+
+    # Calcula si sería un value pick (no envía nada, solo responde si califica)
+    pred = predict_sync(PredictIn(
+        league=inp.league, home_team=inp.home_team, away_team=inp.away_team, odds=inp.odds
+    ))
+    used_odd = _leg_used_odd_for_pick(pred, inp.odds) if inp.odds else None
+    p = (pred.best_pick.prob_pct or 0.0) / 100.0
+    edge = (p * used_odd - 1.0) if (used_odd and used_odd > 1.0) else None
+    qualifies = (edge is not None and edge >= 0.02)  # umbral 2% de valor esperado
+
+    # Aquí podrías integrar Telegram/email si qualifies == True
+    return {"ok": True, "qualifies": qualifies, "edge": round(edge, 4) if edge is not None else None}
+
+# =========================
+# UTILIDAD: listar rutas
+# =========================
+@app.get("/__routes__")
+def list_routes():
+    items = []
+    for r in app.routes:
+        methods = getattr(r, "methods", None)
+        if methods:
+            items.append({"path": r.path, "methods": sorted(list(methods))})
+    return sorted(items, key=lambda x: x["path"])
