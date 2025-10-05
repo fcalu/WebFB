@@ -5,6 +5,12 @@ import sys
 import stripe # <-- NECESARIO
 from pydantic import BaseModel, Field
 
+import secrets
+from datetime import datetime, timezone
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+
 # === IA Boot (OpenAI) ===
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
@@ -75,21 +81,27 @@ app.add_middleware(
 # --------------------------------------------------------------------------------------
 # Lógica de Validación PREMIUM
 # --------------------------------------------------------------------------------------
-def check_premium(key: Optional[str]):
-    """ Verifica si la clave proporcionada coincide con la clave maestra Premium. """
-    # Si la clave no está configurada, permitimos todo (solo para desarrollo inseguro)
-    if PREMIUM_KEY_SECRET == "DEFAULT_DISABLED_KEY":
-        return True 
+def check_premium(key: Optional[str], request: Optional[Request] = None):
+    # 1) Leer de header si no vino en el body
+    if (not key) and request:
+        key = request.headers.get("X-Premium-Key")
 
-    # La clave debe coincidir EXACTAMENTE
+    # 2) Entorno inseguro (dev) o clave maestra
+    if PREMIUM_KEY_SECRET == "DEFAULT_DISABLED_KEY":
+        return True
     if key and key == PREMIUM_KEY_SECRET:
         return True
-    
-    # Si la clave es incorrecta o falta, lanza el error 401
-    raise HTTPException(
-        status_code=401, 
-        detail="Acceso Premium Requerido. Por favor, ingresa tu clave de acceso."
-    )
+
+    # 3) Buscar premium_key en DB y validar estado/periodo
+    if key:
+        rec = premium_find_by_key(key)
+        if rec and rec.get("status") in ("active", "trialing"):
+            now = int(datetime.now(tz=timezone.utc).timestamp())
+            cpe = int(rec.get("current_period_end") or 0)
+            if cpe == 0 or now <= cpe:
+                return True
+
+    raise HTTPException(status_code=401, detail="Acceso Premium requerido.")
 
 # --------------------------------------------------------------------------------------
 # Utilidades generales
@@ -454,6 +466,60 @@ def init_db():
 
 init_db()
 
+def init_premium_db():
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS premium_keys (
+      premium_key TEXT PRIMARY KEY,
+      email TEXT,
+      customer_id TEXT,
+      subscription_id TEXT,
+      plan TEXT,
+      status TEXT,
+      current_period_end INTEGER,
+      created_at INTEGER,
+      updated_at INTEGER
+    )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pk_customer ON premium_keys(customer_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pk_subscription ON premium_keys(subscription_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pk_email ON premium_keys(email)")
+    conn.commit()
+    conn.close()
+
+init_premium_db()
+
+def premium_upsert(*, premium_key: str, email: str, customer_id: str,
+                   subscription_id: str, plan: str, status: str, current_period_end: int):
+    now = int(datetime.now(tz=timezone.utc).timestamp())
+    conn = _db()
+    conn.execute("""
+      INSERT INTO premium_keys(premium_key,email,customer_id,subscription_id,plan,status,current_period_end,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(premium_key) DO UPDATE SET
+        email=excluded.email, customer_id=excluded.customer_id, subscription_id=excluded.subscription_id,
+        plan=excluded.plan, status=excluded.status, current_period_end=excluded.current_period_end,
+        updated_at=excluded.updated_at
+    """, (premium_key, email, customer_id, subscription_id, plan, status, current_period_end, now, now))
+    conn.commit(); conn.close()
+
+def premium_find_by_key(pkey: str):
+    conn = _db()
+    row = conn.execute("SELECT * FROM premium_keys WHERE premium_key=?", (pkey,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def premium_find_or_create_for_customer(customer_id: str, subscription_id: str, email: str,
+                                        plan: str, status: str, current_period_end: int) -> str:
+    conn = _db()
+    row = conn.execute("SELECT premium_key FROM premium_keys WHERE customer_id=?", (customer_id,)).fetchone()
+    conn.close()
+    pkey = row["premium_key"] if row else secrets.token_urlsafe(24)
+    premium_upsert(premium_key=pkey, email=email or "", customer_id=customer_id,
+                   subscription_id=subscription_id, plan=plan, status=status,
+                   current_period_end=int(current_period_end or 0))
+    return pkey
 
 # Cache simple (clave → (ts, data))
 _CACHE: Dict[str, Tuple[float, dict]] = {}
@@ -651,44 +717,101 @@ def _call_openai_structured(model: str, temperature: float, schema: dict, messag
 @app.post("/create-checkout-session")
 def create_checkout_session(inp: CheckoutIn):
     if not stripe.api_key:
-        raise HTTPException(status_code=503, detail="El servicio de pago no está configurado.")
-        
+        raise HTTPException(status_code=503, detail="Stripe no configurado")
+
     try:
-        # success_url incluye el ID de la sesión para el manejo de webhooks futuros
-        success_url = DOMAIN + '/?success=true&session_id={CHECKOUT_SESSION_ID}'
-        cancel_url = DOMAIN + '/?canceled=true'
-        
+        success_url = f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}"
+        cancel_url = f"{FRONTEND_URL}?canceled=true"
+
         checkout_session = stripe.checkout.Session.create(
-            line_items=[
-                {
-                    'price': inp.price_id, 
-                    'quantity': 1,
-                },
-            ],
-            mode='subscription',
-            success_url=success_url, 
+            mode="subscription",
+            line_items=[{"price": inp.price_id, "quantity": 1}],
+            success_url=success_url,
             cancel_url=cancel_url,
-            customer_email=inp.user_email if inp.user_email else None,
-            metadata={'user_email': inp.user_email}, 
+            customer_email=inp.user_email or None,  # opcional; Stripe la pide igual
+            allow_promotion_codes=True,
         )
-        
-        # Devolvemos la URL que el frontend necesita para redirigir directamente
-        return {"session_url": checkout_session.url} 
-        
+        return {"session_url": checkout_session.url}
     except stripe.error.StripeError as e:
-        print(f"STRIPE API ERROR: {e}", file=sys.stderr) 
-        raise HTTPException(status_code=400, detail=f"Error en la API de Stripe: {e.user_message}")
+        raise HTTPException(status_code=400, detail=e.user_message or "Error Stripe")
+
+@app.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
     except Exception as e:
-        print(f"ERROR GENERAL al crear sesión: {e}", file=sys.stderr) 
-        raise HTTPException(status_code=500, detail=f"Error interno al procesar el pago.")
+        raise HTTPException(status_code=400, detail=f"Webhook error: {e}")
+
+    et = event.get("type")
+    obj = event["data"]["object"]
+
+    def _sync_from_sub_id(sub_id: str):
+        sub = stripe.Subscription.retrieve(sub_id)
+        customer_id = sub["customer"]
+        plan = sub["items"]["data"][0]["price"]["id"]
+        status = sub["status"]
+        cpe = int(sub["current_period_end"])
+        # email puede venir del customer
+        cust = stripe.Customer.retrieve(customer_id)
+        email = cust.get("email") or ""
+        premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, cpe)
+
+    if et == "checkout.session.completed":
+        sub_id = obj.get("subscription")
+        if sub_id:
+            _sync_from_sub_id(sub_id)
+
+    elif et in ("invoice.payment_succeeded", "customer.subscription.updated"):
+        sub_id = obj.get("subscription") or obj.get("id")
+        if sub_id:
+            _sync_from_sub_id(sub_id)
+
+    elif et in ("customer.subscription.deleted", "invoice.payment_failed"):
+        sub_id = obj.get("id") if et == "customer.subscription.deleted" else obj.get("subscription")
+        if sub_id:
+            _sync_from_sub_id(sub_id)
+
+    return {"ok": True}
+
+@app.get("/stripe/redeem")
+def stripe_redeem(session_id: str):
+    sess = stripe.checkout.Session.retrieve(session_id)
+    sub_id = sess.get("subscription")
+    if not sub_id:
+        raise HTTPException(status_code=404, detail="No hay suscripción en la sesión")
+    sub = stripe.Subscription.retrieve(sub_id)
+    customer_id = sub["customer"]
+    plan = sub["items"]["data"][0]["price"]["id"]
+    status = sub["status"]
+    cpe = int(sub["current_period_end"])
+    cust = stripe.Customer.retrieve(customer_id)
+    email = cust.get("email") or ""
+
+    pkey = premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, cpe)
+    return {"premium_key": pkey, "status": status, "current_period_end": cpe}
+class PortalIn(BaseModel):
+    premium_key: str
+
+@app.post("/create-billing-portal")
+def create_billing_portal(inp: PortalIn):
+    rec = premium_find_by_key(inp.premium_key)
+    if not rec or not rec.get("customer_id"):
+        raise HTTPException(status_code=404, detail="Clave no encontrada")
+    sess = stripe.billing_portal.Session.create(
+        customer=rec["customer_id"],
+        return_url=FRONTEND_URL,
+    )
+    return {"url": sess.url}
 
 # --------------------------------------------------------------------------------------
 # ENDPOINT PARLAY (CON GATEO)
 # --------------------------------------------------------------------------------------
 @app.post("/parlay/suggest", response_model=ParlayOut)
-def parlay_suggest(inp: ParlayIn):
+def parlay_suggest(inp: ParlayIn, request: Request):
     # --- PASO 1: APLICAR EL GATEO PREMIUM ---
-    check_premium(inp.premium_key)
+    check_premium(inp.premium_key, request)
     # ----------------------------------------
     if not inp.legs or len(inp.legs) == 0:
         raise HTTPException(status_code=400, detail="Debes enviar 1..4 partidos")
@@ -761,9 +884,9 @@ def parlay_suggest(inp: ParlayIn):
 # ENDPOINT BUILDER (CON GATEO)
 # --------------------------------------------------------------------------------------
 @app.post("/builder/suggest", response_model=BuilderOut)
-def builder_suggest(inp: BuilderIn):
+def builder_suggest(inp: BuilderIn, request: Request):
     # --- PASO 1: APLICAR EL GATEO PREMIUM ---
-    check_premium(inp.premium_key)
+    check_premium(inp.premium_key, request)
     # ----------------------------------------
     # Reutiliza las probabilidades ya calibradas/mezcladas del core
     pred = predict_sync(PredictIn(
@@ -904,7 +1027,7 @@ def builder_suggest(inp: BuilderIn):
 @app.post("/iaboot/predict", response_model=IABootOut)
 def iaboot_predict(inp: PredictIn, request: Request):
     # --- PASO 1: APLICAR EL GATEO PREMIUM ---
-    check_premium(inp.premium_key)
+    check_premium(inp.premium_key, request)
     # ----------------------------------------
     if not IABOOT_ON:
         raise HTTPException(status_code=503, detail="IABoot está desactivado")

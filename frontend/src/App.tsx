@@ -101,7 +101,7 @@ async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: stri
       "Content-Type": "application/json",
       ...(opts.headers || {}),
     };
-    if (opts.premiumKey) (headers as Record<string, string>)["X-Premium-Key"] = opts.premiumKey;
+    if ((opts as any).premiumKey) (headers as Record<string, string>)["X-Premium-Key"] = (opts as any).premiumKey;
 
     const res = await fetch(url, { ...opts, headers, signal: controller.signal });
     if (!res.ok) {
@@ -377,7 +377,7 @@ function OddsEditor({
         aria-label={`Cuota ${labelText}`}
         placeholder={ph}
         style={inputCss}
-        pattern="^[0-9]+([\.,][0-9]+)?$"
+        pattern="^[0-9]+([\\.,][0-9]+)?$"
         value={rawOdds[k] ?? ""}
         onChange={(e) => setRawOdds({ ...rawOdds, [k]: e.target.value })}
         onBlur={(e) => {
@@ -483,30 +483,46 @@ export default function App() {
   }, []);
 
   // Guardar/Revocar clave premium
-  const handleKeySubmit = useCallback((newKey: string) => {
-    const trimmedKey = newKey.trim();
-    setPremiumKey(trimmedKey);
-    if (!trimmedKey) {
-      alert("Acceso Premium revocado. Se ha restablecido el acceso Freemium.");
-    }
-  }, [setPremiumKey]);
+  const handleKeySubmit = useCallback(
+    (newKey: string) => {
+      const trimmedKey = newKey.trim();
+      setPremiumKey(trimmedKey);
+      if (!trimmedKey) {
+        alert("Acceso Premium revocado. Se ha restablecido el acceso Freemium.");
+      }
+    },
+    [setPremiumKey]
+  );
 
-  // Feedback de retorno de Stripe
+  /** 🔁 Nuevo: canjeo de sesión de Stripe y guardado de premium_key */
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const success = urlParams.get("success");
-    const canceled = urlParams.get("canceled");
+    const url = new URL(window.location.href);
+    const success = url.searchParams.get("success");
+    const sessionId = url.searchParams.get("session_id");
+    const canceled = url.searchParams.get("canceled");
 
-    if (success === "true") {
-      alert(
-        "¡Pago exitoso! En breve recibirás tu Clave Premium por correo electrónico. Ingresa la clave en el modal Premium para activarlo."
-      );
-      window.history.replaceState(null, "", window.location.pathname);
-    } else if (canceled === "true") {
-      alert("El pago fue cancelado. Puedes intentarlo de nuevo.");
-      window.history.replaceState(null, "", window.location.pathname);
-    }
-  }, []);
+    (async () => {
+      try {
+        if (success === "true" && sessionId) {
+          type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
+          const j = await fetchJSON<RedeemResp>(`${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`);
+          if (j?.premium_key) {
+            setPremiumKey(j.premium_key);
+            alert("¡Premium activado! Tu clave quedó guardada.");
+          } else {
+            alert("Pago correcto, pero no se pudo recuperar la clave. Contacta soporte.");
+          }
+        } else if (canceled === "true") {
+          alert("El pago fue cancelado. Puedes intentarlo de nuevo.");
+        }
+      } catch (e: any) {
+        alert(e?.message || "No se pudo canjear la sesión de Stripe.");
+      } finally {
+        // Limpia los query params para no repetir este flujo al refrescar
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    })();
+  }, [setPremiumKey]);
 
   // Cargar ligas (con abort y manejo de errores silencioso)
   useEffect(() => {
@@ -551,14 +567,8 @@ export default function App() {
 
   const canPredict = league && home && away && home !== away;
 
-  const filteredHome = useMemo(
-    () => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())),
-    [teams, home]
-  );
-  const filteredAway = useMemo(
-    () => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())),
-    [teams, away]
-  );
+  const filteredHome = useMemo(() => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())), [teams, home]);
+  const filteredAway = useMemo(() => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())), [teams, away]);
 
   async function onPredict() {
     if (!canPredict || loading) return;
@@ -733,9 +743,7 @@ export default function App() {
 
         {/* CTA fijo inferior */}
         <div className="fixedbar" aria-live="polite">
-          <div style={{ fontSize: 12, opacity: 0.8 }}>
-            {canPredict ? "Listo para calcular" : "Selecciona liga y ambos equipos"}
-          </div>
+          <div style={{ fontSize: 12, opacity: 0.8 }}>{canPredict ? "Listo para calcular" : "Selecciona liga y ambos equipos"}</div>
           <button
             onClick={onPredict}
             disabled={!canPredict || loading}
@@ -783,35 +791,11 @@ export default function App() {
           onOpenHistory={() => setHistOpen(true)}
         />
 
-        <ParlayDrawer
-          open={parlayOpen}
-          onClose={() => setParlayOpen(false)}
-          API_BASE={API_BASE}
-          isPremium={!!premiumKey}
-          premiumKey={premiumKey}
-        />
+        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} API_BASE={API_BASE} isPremium={!!premiumKey} premiumKey={premiumKey} />
 
-        <BuilderDrawer
-          open={builderOpen}
-          onClose={() => setBuilderOpen(false)}
-          API_BASE={API_BASE}
-          league={league}
-          home={home}
-          away={away}
-          odds={odds}
-          premiumKey={premiumKey}
-        />
+        <BuilderDrawer open={builderOpen} onClose={() => setBuilderOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
 
-        <IABootDrawer
-          open={iaOpen}
-          onClose={() => setIaOpen(false)}
-          API_BASE={API_BASE}
-          league={league}
-          home={home}
-          away={away}
-          odds={odds}
-          premiumKey={premiumKey}
-        />
+        <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
 
         <button
           onClick={() => setPremiumOpen(true)}
@@ -832,13 +816,7 @@ export default function App() {
 
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
 
-        <PremiumDrawer
-          open={premiumOpen}
-          onClose={() => setPremiumOpen(false)}
-          onKeySubmit={handleKeySubmit}
-          currentKey={premiumKey}
-          API_BASE={API_BASE}
-        />
+        <PremiumDrawer open={premiumOpen} onClose={() => setPremiumOpen(false)} onKeySubmit={handleKeySubmit} currentKey={premiumKey} API_BASE={API_BASE} />
 
         {/* Banner PWA */}
         <InstallBanner />

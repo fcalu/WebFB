@@ -173,6 +173,17 @@ export default function ParlayDrawer({
       setLoading(false);
     }
   }
+  async function startCheckout(price_id: string) {
+  const r = await fetch(`${API_BASE}/create-checkout-session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ price_id, user_email: "" }) // el email es opcional
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.detail || "Error al crear sesión");
+  window.location.assign(j.session_url);
+}
+
 
   return (
     <>
