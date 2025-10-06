@@ -11,7 +11,7 @@ type Props = {
   home?: string;
   away?: string;
   odds?: Odds;
-  premiumKey: string; // <-- AÑADIDO: Clave Premium para enviar al backend
+  premiumKey: string; // <-- Clave Premium para enviar al backend
 };
 
 type ApiLeagues = { leagues: string[] };
@@ -26,7 +26,7 @@ type IABootResponse =
       picks?: IAPick[];
       combined_prob_pct?: number;
       combined_fair_odds?: number;
-      raw_text?: string; // por si decides devolver un texto libre
+      raw_text?: string;
     }
   | any;
 
@@ -102,16 +102,20 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
     if (!open) return;
     setErr("");
     setResp(null);
-    // precargar valores desde props
     setLeagueSel(league || "");
     setHomeSel(home || "");
     setAwaySel(away || "");
-    // cargar ligas
-    fetch(`${API_BASE}/leagues`)
-      .then((r) => r.json())
+
+    fetch(`${API_BASE}/leagues`, {
+      headers: { "X-Premium-Key": premiumKey || "" },
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      })
       .then((d: ApiLeagues) => setLeagues(d.leagues ?? []))
       .catch(() => setLeagues([]));
-  }, [open, API_BASE, league, home, away]);
+  }, [open, API_BASE, league, home, away, premiumKey]);
 
   // Cuando cambia la liga seleccionada, carga equipos
   useEffect(() => {
@@ -121,11 +125,16 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
       setAwaySel("");
       return;
     }
-    fetch(`${API_BASE}/teams?league=${encodeURIComponent(leagueSel)}`)
-      .then((r) => r.json())
+    fetch(`${API_BASE}/teams?league=${encodeURIComponent(leagueSel)}`, {
+      headers: { "X-Premium-Key": premiumKey || "" },
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      })
       .then((d: ApiTeams) => setTeams(d.teams ?? []))
       .catch(() => setTeams([]));
-  }, [leagueSel, API_BASE]);
+  }, [leagueSel, API_BASE, premiumKey]);
 
   const filteredHome = useMemo(
     () => teams.filter((t) => t.toLowerCase().includes(homeSel.toLowerCase())),
@@ -136,7 +145,7 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
     [teams, awaySel]
   );
 
-  const canRun = leagueSel && homeSel && awaySel && homeSel !== awaySel;
+  const canRun = !!(leagueSel && homeSel && awaySel && homeSel !== awaySel);
 
   async function onRunIA() {
     if (!canRun) return;
@@ -144,31 +153,35 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
     setErr("");
     setResp(null);
     try {
-      // Llama a tu endpoint del backend (no al API de OpenAI desde el browser)
       const body: any = {
         league: leagueSel,
         home_team: homeSel,
         away_team: awaySel,
-        premium_key: premiumKey, // <-- AÑADIDO: Envía la clave aquí!
+        premium_key: premiumKey, // también en el body (opcional)
       };
       if (odds && (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES)) body.odds = odds;
 
       const r = await fetch(`${API_BASE}/iaboot/suggest`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Premium-Key": premiumKey || "",
+        },
         body: JSON.stringify(body),
       });
-      
+
       if (!r.ok) {
-        // Manejo específico del error 401
         if (r.status === 401) {
-            throw new Error("Acceso denegado (401). Tu Clave Premium es inválida o faltante. Ingresa la clave correcta o suscríbete.");
+          throw new Error(
+            "Acceso denegado (401). Tu Clave Premium es inválida o faltante. Ingresa la clave correcta o suscríbete."
+          );
         }
-        // Capturar el error general del backend
-        const errorText = await r.text();
-        throw new Error(errorText);
+        if (r.status === 503) {
+          throw new Error("IA Boot está desactivado en el servidor.");
+        }
+        throw new Error(await r.text());
       }
-      
+
       const j: IABootResponse = await r.json();
       setResp(j);
     } catch (e: any) {
@@ -183,7 +196,9 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
   return (
     <div style={sheet} role="dialog" aria-modal>
       <div style={head}>
-        <div style={title}>🤖 <span>Predicción IA Boot</span></div>
+        <div style={title}>
+          🤖 <span>Predicción IA Boot</span>
+        </div>
         <button
           onClick={onClose}
           style={{
@@ -272,82 +287,57 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
           </div>
         )}
 
-        {/* ========================================================= */}
-        {/* === RESULTADO (DISEÑO PROFESIONAL) === */}
-        {/* ========================================================= */}
+        {/* RESULTADO */}
         {resp && (
           <div style={{ marginTop: 14 }}>
-            {/* Título / Resumen General - Tarjeta Destacada */}
             {(resp.summary || resp.explanation) && (
-              <div 
-                style={{ 
-                  ...card, 
+              <div
+                style={{
+                  ...card,
                   marginBottom: 16,
-                  background: "rgba(124,58,237, 0.15)", // Fondo sutil del color principal
+                  background: "rgba(124,58,237, 0.15)",
                   border: "1px solid rgba(124,58,237, 0.5)",
                 }}
               >
                 <div style={{ color: "#a5b4fc", fontWeight: 800, fontSize: 13, marginBottom: 8, letterSpacing: 0.5 }}>
                   ANÁLISIS COMPLETO (IA BOOT)
                 </div>
-                <div style={{ fontSize: 16, lineHeight: 1.6, opacity: 0.95, color: '#f3f4f6' }}>
+                <div style={{ fontSize: 16, lineHeight: 1.6, opacity: 0.95, color: "#f3f4f6" }}>
                   {resp.summary || resp.explanation}
                 </div>
               </div>
             )}
 
-            {/* Lista de Picks Detallados - Tarjetas Individuales */}
             {Array.isArray(resp?.picks) && resp.picks.length > 0 ? (
               <div style={{ display: "grid", gap: 14 }}>
                 {resp.picks.map((p: IAPick, i: number) => {
-                  // Usamos 'confidence' si existe, sino usamos 'prob_pct'
                   const score = p.confidence ?? p.prob_pct ?? 0;
                   const displayProb = p.prob_pct ?? 0;
-                  
-                  // Determinar color de confianza (Alto > 75%, Medio > 60%, Bajo)
-                  const confidenceColor = score >= 75 
-                    ? "#22c55e" // Verde (High conviction)
-                    : score >= 60 
-                    ? "#facc15" // Amarillo (Medium conviction)
-                    : "#fb7185"; // Rojo/Rosado (Lower conviction)
-                  
+                  const confidenceColor = score >= 75 ? "#22c55e" : score >= 60 ? "#facc15" : "#fb7185";
+
                   return (
                     <div
                       key={i}
-                      style={{ 
-                        ...card, 
-                        padding: 16, 
-                        borderLeft: `4px solid ${confidenceColor}`, 
-                        display: 'flex',
-                        flexDirection: 'column',
+                      style={{
+                        ...card,
+                        padding: 16,
+                        borderLeft: `4px solid ${confidenceColor}`,
+                        display: "flex",
+                        flexDirection: "column",
                         gap: 8,
                       }}
                     >
-                      
-                      {/* TOP LINE: PICK NAME AND PROBABILITY */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        {/* Market & Selection */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div style={{ fontWeight: 900, fontSize: 16 }}>
                           {p.market} — <span style={{ color: confidenceColor }}>{p.selection}</span>
                         </div>
-                        
-                        {/* Probability */}
                         {typeof p.prob_pct === "number" && (
-                          <div style={{ fontWeight: 900, fontSize: 17, color: '#e5e7eb' }}>
-                            {displayProb.toFixed(2)}%
-                          </div>
+                          <div style={{ fontWeight: 900, fontSize: 17, color: "#e5e7eb" }}>{displayProb.toFixed(2)}%</div>
                         )}
                       </div>
-                      
-                      {/* BOTTOM LINE: RATIONALE */}
+
                       {p.rationale && (
-                        <div style={{ 
-                          opacity: 0.8, 
-                          fontSize: 13, 
-                          color: '#9ca3af' // Gris sutil para la explicación
-                        }}>
-                          {p.rationale}
-                        </div>
+                        <div style={{ opacity: 0.8, fontSize: 13, color: "#9ca3af" }}>{p.rationale}</div>
                       )}
                     </div>
                   );
@@ -355,18 +345,14 @@ export default function IABootDrawer({ open, onClose, API_BASE, league, home, aw
               </div>
             ) : null}
 
-            {/* Texto crudo si el backend devuelve raw_text */}
             {resp.raw_text && (
               <div style={{ ...card, marginTop: 12, whiteSpace: "pre-wrap", opacity: 0.95 }}>{resp.raw_text}</div>
             )}
 
-            {/* Métricas de combo si existen */}
             {typeof resp.combined_prob_pct === "number" && (
               <div style={{ ...card, marginTop: 12, fontWeight: 800 }}>
                 Prob. combinada: {resp.combined_prob_pct.toFixed(2)}%
-                {typeof resp.combined_fair_odds === "number" && (
-                  <> · Cuota justa ~ {resp.combined_fair_odds}</>
-                )}
+                {typeof resp.combined_fair_odds === "number" && <> · Cuota justa ~ {resp.combined_fair_odds}</>}
               </div>
             )}
           </div>

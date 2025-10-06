@@ -4,7 +4,7 @@ import time
 import glob
 import math
 from typing import Dict, List, Optional, Tuple
-
+import re
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
@@ -1230,6 +1230,48 @@ def builder_suggest(inp: BuilderIn, request: Request):
         debug=None
     )
 
+def _norm_text(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "")).strip().lower()
+
+def _canon_market_selection(market_raw: str, selection_raw: str, home_name: str, away_name: str):
+    """
+    Devuelve (market_canon, selection_canon, ui_market, ui_selection)
+      market_canon ∈ {"1X2","Over 2.5","BTTS","UNDER_2_5"}
+      selection_canon para 1X2: {"1","X","2"}; para el resto: {"Sí","No"}
+    """
+    m = _norm_text(market_raw)
+    s = _norm_text(selection_raw)
+    hn = _norm_text(home_name)
+    an = _norm_text(away_name)
+
+    # BTTS
+    if "btts" in m or "ambos" in m or "both teams" in m or "gg" in m:
+        sel = "Sí" if s in ("si","sí","yes","y","true","1") else ("No" if s in ("no","n","false","0") else "Sí")
+        return ("BTTS", sel, "BTTS", sel)
+
+    # 1X2 / Resultado
+    if any(k in m for k in ("1x2","resultado","ganador","winner","match result","resultado final")):
+        if s in ("x","empate","draw"):
+            return ("1X2","X","1X2","Empate")
+        if any(k in s for k in ("local","home","casa")) or s == "1" or hn in s:
+            return ("1X2","1","1X2","Gana local")
+        if any(k in s for k in ("visit","away","fuera")) or s == "2" or an in s:
+            return ("1X2","2","1X2","Gana visitante")
+        if "local" in m:   return ("1X2","1","1X2","Gana local")
+        if "visit" in m:   return ("1X2","2","1X2","Gana visitante")
+        return ("1X2","1","1X2","Gana local")
+
+    # Over/Under 2.5
+    def has_over25(t):  return "over 2.5" in t or "más de 2.5" in t or "mas de 2.5" in t or "o2.5" in t
+    def has_under25(t): return "under 2.5" in t or "menos de 2.5" in t or "u2.5" in t
+    if has_over25(m) or has_over25(s):
+        return ("Over 2.5","Sí","Over 2.5","Más de 2.5")
+    if has_under25(m) or has_under25(s):
+        return ("UNDER_2_5","Sí","Under 2.5","Menos de 2.5")
+
+    # Fallback razonable
+    return ("BTTS","Sí","BTTS","Sí")
+
 
 # --------------------------------------------------------------------------------------
 # ENDPOINT IABOOT (CON GATEO Y CORRECCIÓN DE PORCENTAJES)
@@ -1317,33 +1359,47 @@ def iaboot_predict(inp: PredictIn, request: Request):
     # Normalizar a Pydantic
     picks = []
     for p in (payload.get("picks") or []):
-        p_pct_ia = float(p.get("prob_pct", 0) or 0)
-        p_conf_ia = float(p.get("confidence", 0) or 0)
-        
-        selection_key = p.get('selection', '').strip()
-        
-        # Lógica para simplificar nombres de 1X2 si es necesario
-        if p.get('market', '') in ["Resultado", "1X2", "Ganador"]:
-             if "gana" in selection_key: selection_key = selection_key.split()[-1] # Solo "Local" o "Visitante"
-             selection_key = selection_key.replace(home_name, "Gana Local").replace(away_name, "Gana Visitante")
-             
-        p_pct_base = prob_map.get(selection_key, 0)
-        
-        # 3. Decidir el porcentaje final
-        p_pct_final = p_pct_ia
-        if p_pct_final < 0.01:
-            p_pct_final = p_pct_base
-        
-        # 4. Decidir la Confianza Final
-        p_conf_final = p_conf_ia
-        if p_conf_final < 0.01:
-            p_conf_final = max(0.0, min(100.0, abs(p_pct_final - 50.0) * 2.0))
-            
+        raw_mkt = p.get("market","")
+        raw_sel = p.get("selection","")
+
+        market_c, sel_c, ui_market, ui_selection = _canon_market_selection(raw_mkt, raw_sel, home_name, away_name)
+
+        # Probabilidad base del modelo
+        if market_c == "1X2":
+            if sel_c == "1":
+                p_base = float(pred.probs.get("home_win_pct", 0.0))
+            elif sel_c == "2":
+                p_base = float(pred.probs.get("away_win_pct", 0.0))
+            else:
+                p_base = float(pred.probs.get("draw_pct", 0.0))
+        elif market_c == "Over 2.5":
+            p_base = float(pred.probs.get("over_2_5_pct", 0.0))
+        elif market_c == "UNDER_2_5":
+            p_base = 100.0 - float(pred.probs.get("over_2_5_pct", 0.0))
+        else:  # BTTS
+            if sel_c == "Sí":
+                p_base = float(pred.probs.get("btts_pct", 0.0))
+            else:
+                p_base = 100.0 - float(pred.probs.get("btts_pct", 0.0))
+
+        # % y confianza enviados por la IA (si no hay, usamos base)
+        try:
+            p_pct_ia = float(p.get("prob_pct") or 0.0)
+        except Exception:
+            p_pct_ia = 0.0
+        p_final = p_pct_ia if p_pct_ia >= 0.01 else p_base
+
+        try:
+            conf_ia = float(p.get("confidence") or 0.0)
+        except Exception:
+            conf_ia = 0.0
+        conf_final = conf_ia if conf_ia >= 0.01 else max(0.0, min(100.0, abs(p_final - 50.0) * 2.0))
+
         picks.append(IABootLeg(
-            market=p.get("market",""),
-            selection=p.get("selection",""),
-            prob_pct=round(p_pct_final, 2),        
-            confidence=round(p_conf_final, 2),     
+            market=ui_market,
+            selection=ui_selection,
+            prob_pct=round(p_final, 2),
+            confidence=round(conf_final, 2),
             rationale=p.get("rationale",""),
         ))
 
