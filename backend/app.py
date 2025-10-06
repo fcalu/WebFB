@@ -879,6 +879,217 @@ def parlay_suggest(inp: ParlayIn, request: Request):
 # --------------------------------------------------------------------------------------
 # ... (las funciones predict_core, confidence_from_prob, etc. son correctas)
 
+# =========================
+# Núcleo de predicción
+# =========================
+
+def confidence_from_prob(prob_pct: float) -> float:
+    """
+    Devuelve una 'confianza' 0..100 a partir de qué tan lejos está de 50%.
+    Si prefieres 0..1 para el frontend, divide entre 100 donde lo uses.
+    """
+    try:
+        p = float(prob_pct)
+    except Exception:
+        p = 50.0
+    return max(0.0, min(100.0, abs(p - 50.0) * 2.0))
+
+def _choose_best_pick(probs_pct: Dict[str, float], odds: Optional[Dict[str, float]]) -> BestPick:
+    """
+    Selecciona el mejor pick. Si hay cuotas -> busca mayor EV.
+    Si no hay cuotas -> el evento con mayor prob.
+    probs_pct: llaves esperadas: home_win_pct, draw_pct, away_win_pct, over_2_5_pct, btts_pct (en %)
+    odds: llaves posibles: "1","X","2","O2_5","BTTS_YES"
+    """
+    # Candidatos
+    cands = []
+    # 1X2
+    for k_sel, label in (("1","1"), ("X","X"), ("2","2")):
+        p01 = (probs_pct["home_win_pct" if k_sel=="1" else "draw_pct" if k_sel=="X" else "away_win_pct"])/100.0
+        odd = float(odds.get(k_sel)) if odds and odds.get(k_sel) else None
+        ev = (p01 * odd - 1.0) if (odd and odd > 1.0) else None
+        cands.append(("1X2", label, p01*100.0, ev))
+    # Over 2.5 (Sí)
+    p_o = probs_pct.get("over_2_5_pct", 0.0)/100.0
+    odd_o = float(odds.get("O2_5")) if odds and odds.get("O2_5") else None
+    ev_o = (p_o * odd_o - 1.0) if (odd_o and odd_o > 1.0) else None
+    cands.append(("Over 2.5", "Sí", p_o*100.0, ev_o))
+    # BTTS (Sí)
+    p_b = probs_pct.get("btts_pct", 0.0)/100.0
+    odd_b = float(odds.get("BTTS_YES")) if odds and odds.get("BTTS_YES") else None
+    ev_b = (p_b * odd_b - 1.0) if (odd_b and odd_b > 1.0) else None
+    cands.append(("BTTS", "Sí", p_b*100.0, ev_b))
+
+    # Con cuotas -> prioriza mayor EV; sin cuotas -> mayor prob
+    any_odds = odds and any(odds.get(k) for k in ("1","X","2","O2_5","BTTS_YES"))
+    if any_odds:
+        # si todas las EV son None, fallback a prob
+        if all(ev is None for _,_,_,ev in cands):
+            best = max(cands, key=lambda x: x[2])  # por prob
+        else:
+            # toma la mejor EV (permite negativas; se prefiere la mayor)
+            best = max(cands, key=lambda x: (x[3] if x[3] is not None else -1e9))
+    else:
+        best = max(cands, key=lambda x: x[2])
+
+    market, selection, prob_pct, _ = best
+    conf = confidence_from_prob(prob_pct)
+    reasons = []
+    if market == "1X2":
+        reasons.append("Selección 1X2 con mayor expectativa del modelo.")
+    elif market == "Over 2.5":
+        reasons.append("Alta suma esperada de goles según Poisson.")
+    elif market == "BTTS":
+        reasons.append("Ambos equipos con tasas ofensivas apreciables.")
+
+    return BestPick(
+        market=market,
+        selection=selection,
+        prob_pct=round(prob_pct, 2),
+        confidence=round(conf, 2),
+        reasons=reasons
+    )
+
+def predict_core(store: "LeagueStore", home: str, away: str, odds: Optional[Dict[str, float]]) -> dict:
+    # 1) Lambdas
+    lam_h, lam_a = store.get_lambda_pair(home, away)
+
+    # 2) Matriz Poisson (+ DC suave si procede)
+    M = poisson_matrix(lam_h, lam_a, kmax=POISSON_MAX_GOALS)
+    if USE_DIXON_COLES:
+        M = dixon_coles_soft(M, store.dc_rho)
+
+    # 3) Agregación de mercados base
+    agg = matrix_1x2_o25_btts(M)
+    p1, px, p2 = agg["home_win_pct"]/100.0, agg["draw_pct"]/100.0, agg["away_win_pct"]/100.0
+    po, pb = agg["over_2_5_pct"]/100.0, agg["btts_pct"]/100.0
+
+    # 4) Calibración (si existe)
+    if store.cal_1x2:
+        p1, px, p2 = store.cal_1x2(p1, px, p2)
+    if store.cal_o25:
+        po = store.cal_o25(po)
+    if store.cal_btts:
+        pb = store.cal_btts(pb)
+
+    # 5) Blend con mercado (si hay cuotas)
+    implied = {}
+    if odds:
+        imp_1x2 = implied_1x2(odds)
+        if imp_1x2:
+            p1 = blend_logit(p1, imp_1x2.get("1"), MARKET_WEIGHT)
+            px = blend_logit(px, imp_1x2.get("X"), MARKET_WEIGHT)
+            p2 = blend_logit(p2, imp_1x2.get("2"), MARKET_WEIGHT)
+            implied.update({"1": imp_1x2.get("1"), "X": imp_1x2.get("X"), "2": imp_1x2.get("2")})
+        imp_o = implied_single(odds.get("O2_5"))
+        imp_b = implied_single(odds.get("BTTS_YES"))
+        if imp_o is not None:
+            po = blend_logit(po, imp_o, MARKET_WEIGHT)
+            implied["O2_5"] = imp_o
+        if imp_b is not None:
+            pb = blend_logit(pb, imp_b, MARKET_WEIGHT)
+            implied["BTTS_YES"] = imp_b
+
+    # 6) Empaquetar probabilidades finales (%)
+    probs_pct = {
+        "home_win_pct": round(p1*100.0, 2),
+        "draw_pct": round(px*100.0, 2),
+        "away_win_pct": round(p2*100.0, 2),
+        "over_2_5_pct": round(po*100.0, 2),
+        "btts_pct": round(pb*100.0, 2),
+        "top_scorelines": agg["top_scorelines"],  # útil para debug
+    }
+
+    # 7) Medias adicionales (córners/tarjetas)
+    avgs = store.get_additional_avgs(home, away)
+    # tu UI espera corners_mlp_pred; usa la media como proxy si no hay MLP
+    avgs_out = {
+        "total_corners_avg": round(avgs.get("total_corners_avg", 0.0), 2),
+        "total_yellow_cards_avg": round(avgs.get("total_yellow_cards_avg", 0.0), 2),
+        "corners_mlp_pred": round(avgs.get("total_corners_avg", 0.0), 2),
+    }
+
+    # 8) Mejor pick
+    best = _choose_best_pick(probs_pct, odds)
+
+    # 9) Resumen cortito
+    summary = (
+        f"{home} vs {away}: Local {probs_pct['home_win_pct']}% · "
+        f"Empate {probs_pct['draw_pct']}% · Visitante {probs_pct['away_win_pct']}% · "
+        f"Over2.5 {probs_pct['over_2_5_pct']}% · BTTS {probs_pct['btts_pct']}%."
+    )
+
+    # 10) Salida base para predict_sync
+    return {
+        "probs": {
+            "home_win_pct": probs_pct["home_win_pct"],
+            "draw_pct": probs_pct["draw_pct"],
+            "away_win_pct": probs_pct["away_win_pct"],
+            "over_2_5_pct": probs_pct["over_2_5_pct"],
+            "btts_pct": probs_pct["btts_pct"],
+        },
+        "poisson": {
+            "home_lambda": round(lam_h, 4),
+            "away_lambda": round(lam_a, 4),
+            "top_scorelines": probs_pct["top_scorelines"],
+        },
+        "averages": avgs_out,
+        "best_pick": best,
+        "summary": summary,
+        "debug": {
+            "used_dixon_coles": bool(USE_DIXON_COLES),
+            "market_implied": implied if implied else None,
+        },
+    }
+
+# =========================
+# (Opcional) helpers para IABoot si activas IABOOT_ON
+# =========================
+def _recent_form_snippet(store: "LeagueStore", home: str, away: str, n: int = 6) -> str:
+    # Stub sencillo; si quieres, puedes enriquecer con rachas reales desde store.df
+    return ""
+
+def _iaboot_schema() -> dict:
+    # Esquema minimal para picks estructurados
+    return {
+        "name": "iaboot_schema",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "match": {"type": "string"},
+                "league": {"type": "string"},
+                "summary": {"type": "string"},
+                "picks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "market": {"type": "string"},
+                            "selection": {"type": "string"},
+                            "prob_pct": {"type": "number"},
+                            "confidence": {"type": "number"},
+                            "rationale": {"type": "string"},
+                        },
+                        "required": ["market","selection"]
+                    }
+                }
+            },
+            "required": ["picks"]
+        }
+    }
+
+def _iaboot_messages(pred: PredictOut, odds: Optional[Dict[str,float]], form_text: str) -> tuple[str, str]:
+    sys = "Eres un analista de fútbol. Devuelve JSON con picks cortos y probabilidades si las sabes."
+    user = (
+        f"Partido: {pred.home_team} vs {pred.away_team} en {pred.league}. "
+        f"Prob. modelo: 1={pred.probs['home_win_pct']}%, X={pred.probs['draw_pct']}%, 2={pred.probs['away_win_pct']}%, "
+        f"Over2.5={pred.probs['over_2_5_pct']}%, BTTS={pred.probs['btts_pct']}%. "
+        f"Lambdas: {pred.poisson.get('home_lambda')} - {pred.poisson.get('away_lambda')}. "
+        f"Form: {form_text or 'N/A'}. "
+        f"Cuotas: {odds or 'N/A'}."
+    )
+    return sys, user
+
 # --------------------------------------------------------------------------------------
 # ENDPOINT BUILDER (CON GATEO)
 # --------------------------------------------------------------------------------------
