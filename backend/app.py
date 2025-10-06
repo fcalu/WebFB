@@ -1,41 +1,38 @@
 # backend/app.py
-import os
-import time
-import glob
-import math
+# === stdlib ===
+import os, sys, time, glob, math, re, secrets, sqlite3
 from typing import Dict, List, Optional, Tuple
-import re
+from datetime import datetime, timezone, timedelta  # <-- timedelta si calculas periodos
+
+# === terceros ===
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from scipy.stats import poisson
-import sqlite3
-from fastapi.responses import PlainTextResponse
-import sys
-import stripe # <-- NECESARIO
+from fastapi import FastAPI, HTTPException, Request, Header   # <-- Header si lo usas
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse, JSONResponse # <-- JSONResponse si lo usas
 from pydantic import BaseModel, Field
+import stripe
+import requests  # <-- PayPal por HTTP
 
-import secrets
-from datetime import datetime, timezone
-
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-
-# === IA Boot (OpenAI) ===
+# === OpenAI / retry ===
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
-# (Opcional) calibración Platt con sklearn; si no está, seguimos sin calibrar
+
+# === sklearn (opcional) ===
 try:
     from sklearn.linear_model import LogisticRegression
     SKLEARN_OK = True
 except Exception:
     SKLEARN_OK = False
 
+
 # --- CONFIGURACIÓN GLOBAL Y SECRETA ---
 PREMIUM_KEY_SECRET = os.getenv("PREMIUM_ACCESS_KEY", "DEFAULT_DISABLED_KEY") 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 DOMAIN = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 # Inicializa Stripe
 if STRIPE_SECRET_KEY:
@@ -58,6 +55,37 @@ EXPOSE_DEBUG         = os.getenv("EXPOSE_DEBUG", "0") == "1"
 IABOOT_ON = os.getenv("IABOOT_ON", "0") == "1"
 IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-4o")
 IABOOT_TEMPERATURE = float(os.getenv("IABOOT_TEMPERATURE", "0.5"))
+# --- precios Stripe (IDs de price) ---
+STRIPE_PRICE_MONTHLY = os.getenv("STRIPE_PRICE_MONTHLY")     # subscription
+STRIPE_PRICE_ANNUAL  = os.getenv("STRIPE_PRICE_ANNUAL")      # subscription
+# OXXO: pago único en MXN (crea productos/precios "one-time")
+STRIPE_PRICE_OXXO_MONTHLY = os.getenv("STRIPE_PRICE_OXXO_MONTHLY")
+STRIPE_PRICE_OXXO_ANNUAL  = os.getenv("STRIPE_PRICE_OXXO_ANNUAL")
+
+# --- PayPal ---
+PAYPAL_CLIENT_ID     = os.getenv("PAYPAL_CLIENT_ID")
+PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET")
+PAYPAL_MODE          = os.getenv("PAYPAL_MODE", "sandbox")   # 'live' o 'sandbox'
+PAYPAL_PRICE_MONTHLY = os.getenv("PAYPAL_PRICE_MONTHLY")     # ej: 9.99
+PAYPAL_PRICE_ANNUAL  = os.getenv("PAYPAL_PRICE_ANNUAL")      # ej: 99.00
+PAYPAL_CURRENCY      = os.getenv("PAYPAL_CURRENCY", "USD")
+
+
+try:
+    from paypalcheckoutsdk.core import PayPalHttpClient, SandboxEnvironment, LiveEnvironment
+    from paypalcheckoutsdk.orders import OrdersCreateRequest, OrdersCaptureRequest
+    PAYPAL_OK = True
+except Exception:
+    PAYPAL_OK = False
+
+def _paypal_client():
+    if not PAYPAL_OK:
+        raise HTTPException(500, "PayPal SDK no instalado")
+    if not (PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET):
+        raise HTTPException(500, "PayPal no configurado")
+    env = LiveEnvironment(client_id=PAYPAL_CLIENT_ID, client_secret=PAYPAL_CLIENT_SECRET) \
+          if PAYPAL_MODE == "live" else SandboxEnvironment(client_id=PAYPAL_CLIENT_ID, client_secret=PAYPAL_CLIENT_SECRET)
+    return PayPalHttpClient(env)
 # --------------------------------------------------------------------------------------
 # Configuración básica
 # --------------------------------------------------------------------------------------
@@ -67,6 +95,18 @@ POISSON_MAX_GOALS = 7
 _openai_client = OpenAI()
 
 app = FastAPI(title="FootyMines API (hybrid-core)")
+
+
+class BillingCheckoutIn(BaseModel):
+    plan: str            # 'monthly' | 'annual'
+    method: str          # 'card' | 'oxxo'
+    user_email: Optional[str] = None
+
+class PayPalStartIn(BaseModel):
+    plan: str            # 'monthly' | 'annual'
+
+class PayPalCaptureIn(BaseModel):
+    order_id: str
 
 # CORS abierto (ajusta si necesitas)
 app.add_middleware(
@@ -734,6 +774,49 @@ def create_checkout_session(inp: CheckoutIn):
     except stripe.error.StripeError as e:
         raise HTTPException(status_code=400, detail=e.user_message or "Error Stripe")
 
+@app.post("/billing/checkout")
+def billing_checkout(inp: BillingCheckoutIn):
+    if not stripe.api_key:
+        raise HTTPException(503, "Stripe no configurado")
+
+    success_url = f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url  = f"{FRONTEND_URL}?canceled=true"
+
+    if inp.method == "card":
+        price_id = STRIPE_PRICE_ANNUAL if inp.plan == "annual" else STRIPE_PRICE_MONTHLY
+        if not price_id:
+            raise HTTPException(400, "Falta STRIPE_PRICE_MONTHLY/ANNUAL")
+        s = stripe.checkout.Session.create(
+            mode="subscription",
+            line_items=[{"price": price_id, "quantity": 1}],
+            customer_email=inp.user_email or None,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            allow_promotion_codes=True,
+        )
+        return {"provider": "stripe", "url": s.url}
+
+    if inp.method == "oxxo":
+        # OXXO = pago único (no suscripción). Daremos acceso 30/365 días cuando el pago quede 'succeeded'.
+        price_id = STRIPE_PRICE_OXXO_ANNUAL if inp.plan == "annual" else STRIPE_PRICE_OXXO_MONTHLY
+        if not price_id:
+            raise HTTPException(400, "Falta STRIPE_PRICE_OXXO_MONTHLY/ANNUAL")
+        s = stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[{"price": price_id, "quantity": 1}],
+            payment_method_types=["oxxo"],
+            payment_intent_data={"metadata": {"plan": inp.plan, "pm": "oxxo"}},
+            customer_email=inp.user_email or None,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={"plan": inp.plan, "pm": "oxxo"},
+        )
+        return {"provider": "stripe", "url": s.url}
+
+    raise HTTPException(400, "Método no soportado")
+
+
+
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
@@ -743,8 +826,109 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Webhook error: {e}")
 
+    et  = event.get("type")
+    obj = event["data"]["object"]
+
+    def _period_end(plan: str) -> int:
+        now = int(datetime.now(tz=timezone.utc).timestamp())
+        return now + (365*24*3600 if plan == "annual" else 30*24*3600)
+
+    def _sync_from_sub_id(sub_id: str):
+        sub = stripe.Subscription.retrieve(sub_id)
+        customer_id = sub["customer"]
+        plan = sub["items"]["data"][0]["price"]["id"]
+        status = sub["status"]
+        cpe = int(sub["current_period_end"])
+        cust = stripe.Customer.retrieve(customer_id)
+        email = cust.get("email") or ""
+        premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, cpe)
+
+    # 1) Checkout completado:
+    if et == "checkout.session.completed":
+        # a) Suscripción con tarjeta: activamos via sub_id
+        if obj.get("mode") == "subscription":
+            sub_id = obj.get("subscription")
+            if sub_id:
+                _sync_from_sub_id(sub_id)
+        # b) OXXO: NO activar aquí. Esperar a payment_intent.succeeded.
+
+    # 2) Pago OXXO confirmado (cuando el voucher se liquida):
+    elif et == "payment_intent.succeeded":
+        pi = obj  # PaymentIntent
+        pm_types = pi.get("payment_method_types") or []
+        if "oxxo" in pm_types:
+            meta = pi.get("metadata") or {}
+            plan = meta.get("plan", "monthly")
+            email = ""
+            try:
+                if pi.get("customer"):
+                    cust = stripe.Customer.retrieve(pi["customer"])
+                    email = cust.get("email") or ""
+                elif pi.get("charges", {}).get("data"):
+                    email = (pi["charges"]["data"][0].get("billing_details") or {}).get("email") or ""
+            except Exception:
+                pass
+
+            pkey = secrets.token_urlsafe(24)
+            premium_upsert(
+                premium_key=pkey,
+                email=email,
+                customer_id=pi.get("customer") or "",
+                subscription_id=pi["id"],     # guardamos el PI como "subscription_id"
+                plan=f"oxxo_{plan}",
+                status="active",
+                current_period_end=_period_end(plan),
+            )
+
+    # 3) Renovaciones / cambios de suscripción
+    elif et in ("invoice.payment_succeeded", "customer.subscription.updated"):
+        sub_id = obj.get("subscription") or obj.get("id")
+        if sub_id:
+            _sync_from_sub_id(sub_id)
+
+    # 4) Cancelaciones / fallos
+    elif et in ("customer.subscription.deleted", "invoice.payment_failed"):
+        sub_id = obj.get("id") if et == "customer.subscription.deleted" else obj.get("subscription")
+        if sub_id:
+            _sync_from_sub_id(sub_id)
+
+    return {"ok": True}
+
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook error: {e}")
+
     et = event.get("type")
     obj = event["data"]["object"]
+
+    if et == "checkout.session.completed":
+        # ya manejas subscription; añadimos pago único (OXXO)
+     mode = obj.get("mode")
+    if mode == "payment":
+        pi_id = obj.get("payment_intent")
+        plan  = (obj.get("metadata") or {}).get("plan", "monthly")
+        if pi_id:
+            pi = stripe.PaymentIntent.retrieve(pi_id)
+            if pi.get("status") == "succeeded":
+                email = (obj.get("customer_details") or {}).get("email") or ""
+                # acceso por periodo fijo
+                def _period_end(plan):
+                    now = int(datetime.now(tz=timezone.utc).timestamp())
+                    return now + (365*24*3600 if plan == "annual" else 30*24*3600)
+                pkey = secrets.token_urlsafe(24)
+                premium_upsert(
+                    premium_key=pkey,
+                    email=email,
+                    customer_id=pi.get("customer") or "",
+                    subscription_id=pi_id,   # guardamos PI aquí
+                    plan=f"oxxo_{plan}",
+                    status="active",
+                    current_period_end=_period_end(plan),
+                )
+
 
     def _sync_from_sub_id(sub_id: str):
         sub = stripe.Subscription.retrieve(sub_id)
@@ -1517,6 +1701,60 @@ def alerts_value_pick(inp: ValuePickIn, request: Request):
 
     # Aquí podrías integrar Telegram/email si qualifies == True
     return {"ok": True, "qualifies": qualifies, "edge": round(edge, 4) if edge is not None else None}
+
+@app.post("/paypal/create-order")
+def paypal_create_order(inp: PayPalStartIn):
+    client = _paypal_client()
+    plan = inp.plan if inp.plan in ("monthly","annual") else "monthly"
+    amount = PAYPAL_PRICE_ANNUAL if plan == "annual" else PAYPAL_PRICE_MONTHLY
+    if not amount:
+        raise HTTPException(400, "Falta PAYPAL_PRICE_*")
+    req = OrdersCreateRequest()
+    req.headers["prefer"] = "return=representation"
+    req.request_body({
+        "intent": "CAPTURE",
+        "purchase_units": [{
+            "amount": {"currency_code": PAYPAL_CURRENCY, "value": str(amount)},
+            "custom_id": plan
+        }],
+        "application_context": {
+            "brand_name": "FootyMines",
+            "user_action": "PAY_NOW",
+            "return_url": f"{FRONTEND_URL}?pp_return=true",
+            "cancel_url": f"{FRONTEND_URL}?canceled=true",
+        }
+    })
+    r = client.execute(req)
+    order = r.result
+    link = next((l.href for l in order.links if l.rel == "approve"), None)
+    return {"order_id": order.id, "approve_url": link}
+
+@app.post("/paypal/capture")
+def paypal_capture(inp: PayPalCaptureIn):
+    client = _paypal_client()
+    r = client.execute(OrdersCaptureRequest(inp.order_id))
+    result = r.result
+    if result.status != "COMPLETED":
+        raise HTTPException(400, f"Estado PayPal: {result.status}")
+    email = (result.payer and result.payer.email_address) or ""
+    plan = "monthly"
+    for pu in (result.purchase_units or []):
+        if pu.custom_id in ("monthly","annual"):
+            plan = pu.custom_id
+    now = int(datetime.now(tz=timezone.utc).timestamp())
+    cpe = now + (365*24*3600 if plan == "annual" else 30*24*3600)
+    pkey = secrets.token_urlsafe(24)
+    premium_upsert(
+        premium_key=pkey,
+        email=email,
+        customer_id=result.id,
+        subscription_id=result.id,
+        plan=f"paypal_{plan}",
+        status="active",
+        current_period_end=cpe,
+    )
+    return {"premium_key": pkey, "status": "active", "current_period_end": cpe}
+
 
 # =========================
 # UTILIDAD: listar rutas

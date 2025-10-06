@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-
+import BillingDrawer from "./components/BillingDrawer";
 // ✅ Componentes reales (ya no placeholders)
 import BestPickPro from "./components/BestPickPro";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -467,6 +467,7 @@ export default function App() {
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
+  const [billingOpen, setBillingOpen] = useState(false);
   // Parley + Historial + Stake
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
@@ -798,7 +799,7 @@ export default function App() {
         <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
 
         <button
-          onClick={() => setPremiumOpen(true)}
+          onClick={() => setBillingOpen(true)}
           title="Premium"
           style={{
             display: "inline-flex",
@@ -868,6 +869,13 @@ export default function App() {
             </div>
           </>
         )}
+        <BillingDrawer
+          open={billingOpen}
+          onClose={() => setBillingOpen(false)}
+          API_BASE={API_BASE}
+          currentKey={premiumKey}
+          onKeySaved={(k) => setPremiumKey(k)}
+        />
 
         {stakeDefaults && (
           <StakeModal
