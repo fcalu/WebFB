@@ -1297,45 +1297,72 @@ def _recent_form_snippet(store: "LeagueStore", home: str, away: str, n: int = 6)
     return ""
 
 def _iaboot_schema() -> dict:
-    # Esquema minimal para picks estructurados
     return {
         "name": "iaboot_schema",
         "schema": {
             "type": "object",
             "properties": {
-                "match": {"type": "string"},
+                "match":  {"type": "string"},
                 "league": {"type": "string"},
-                "summary": {"type": "string"},
+                "summary":{"type": "string"},
                 "picks": {
                     "type": "array",
+                    "minItems": 1,
+                    "maxItems": 3,
                     "items": {
                         "type": "object",
                         "properties": {
-                            "market": {"type": "string"},
-                            "selection": {"type": "string"},
-                            "prob_pct": {"type": "number"},
-                            "confidence": {"type": "number"},
-                            "rationale": {"type": "string"},
+                            "market": {
+                                "type": "string",
+                                "enum": ["1X2", "Over 2.5", "UNDER_2_5", "BTTS"]
+                            },
+                            "selection": {
+                                "type": "string",
+                                "enum": ["1","X","2","Sí","No"]
+                            },
+                            "prob_pct":   {"type": "number", "minimum": 0, "maximum": 100},
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 100},
+                            "rationale":  {"type": "string"}
                         },
-                        "required": ["market","selection"]
+                        "required": ["market","selection","prob_pct","confidence"]
                     }
                 }
             },
-            "required": ["picks"]
+            "required": ["picks","match","league"]
         }
     }
-
-def _iaboot_messages(pred: PredictOut, odds: Optional[Dict[str,float]], form_text: str) -> tuple[str, str]:
-    sys = "Eres un analista de fútbol. Devuelve JSON con picks cortos y probabilidades si las sabes."
-    user = (
-        f"Partido: {pred.home_team} vs {pred.away_team} en {pred.league}. "
-        f"Prob. modelo: 1={pred.probs['home_win_pct']}%, X={pred.probs['draw_pct']}%, 2={pred.probs['away_win_pct']}%, "
-        f"Over2.5={pred.probs['over_2_5_pct']}%, BTTS={pred.probs['btts_pct']}%. "
-        f"Lambdas: {pred.poisson.get('home_lambda')} - {pred.poisson.get('away_lambda')}. "
-        f"Form: {form_text or 'N/A'}. "
-        f"Cuotas: {odds or 'N/A'}."
+def _iaboot_messages(pred: PredictOut, odds: dict | None, form_text: str) -> tuple[str, str]:
+    sys_msg = (
+        "Eres un analista profesional de apuestas deportivas que transforma métricas de un "
+        "modelo estadístico (Poisson calibrado + blend con mercado) en picks accionables.\n"
+        "REGLAS:\n"
+        "1) Mercados permitidos: '1X2','Over 2.5','UNDER_2_5','BTTS' con selecciones válidas.\n"
+        "2) No inventes probabilidades; usa las del modelo.\n"
+        "3) Si hay cuotas, prioriza EV≈p*cuota−1; si no, probabilidad base.\n"
+        "4) Máximo 3 picks, evita correlaciones fuertes.\n"
+        "5) Cada pick: market, selection, prob_pct, confidence, rationale (1–2 frases con datos).\n"
+        "6) Tono profesional y sin promesas.\n"
+        "7) SALIDA: SOLO JSON con match, league, summary, picks[].\n"
     )
-    return sys, user
+    odds_text = str(odds) if odds else "N/A"
+    top = pred.poisson.get("top_scorelines") or []
+    user_msg = (
+        f"Partido: {pred.home_team} vs {pred.away_team} en {pred.league}.\n"
+        f"Probabilidades del modelo (%%):\n"
+        f"- 1: {pred.probs['home_win_pct']}   X: {pred.probs['draw_pct']}   2: {pred.probs['away_win_pct']}\n"
+        f"- Over 2.5: {pred.probs['over_2_5_pct']}\n"
+        f"- BTTS Sí: {pred.probs['btts_pct']}\n\n"
+        f"Lambdas Poisson: local={pred.poisson.get('home_lambda')}  visitante={pred.poisson.get('away_lambda')}\n"
+        f"Marcadores más probables (top-5): {top}\n"
+        f"Cuotas (si hay): {odds_text}\n"
+        f"Contexto breve: {form_text or 'N/A'}\n\n"
+        "Instrucciones:\n"
+        "- Si hay cuotas, estima EV≈p*cuota−1 y ordena por EV>0. Si no hay EV positivo, usa probabilidad base.\n"
+        "- Evita picks fuertemente correlacionados. Máx. 3.\n"
+        "- 'confidence' puede basarse en distancia a 50%% y coherencia con lambdas/cuotas.\n"
+        "Devuelve SOLO el JSON.\n"
+    )
+    return sys_msg, user_msg
 
 # --------------------------------------------------------------------------------------
 # ENDPOINT BUILDER (CON GATEO)
