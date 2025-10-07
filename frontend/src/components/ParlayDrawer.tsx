@@ -64,6 +64,24 @@ const panel: React.CSSProperties = {
   padding: 14,
 };
 
+// NUEVO: barra sticky para acciones
+const stickyBar: React.CSSProperties = {
+  position: "sticky",
+  bottom: 0,
+  zIndex: 2,
+  padding: 12,
+  marginTop: 12,
+  borderTop: "1px solid rgba(255,255,255,.12)",
+  background: "linear-gradient(to top, rgba(11,16,32,.95), rgba(11,16,32,.85))",
+  backdropFilter: "blur(6px)",
+  display: "flex",
+  gap: 10,
+  alignItems: "center",
+  justifyContent: "space-between",
+  borderBottomLeftRadius: 14,
+  borderBottomRightRadius: 14,
+};
+
 const pct = (n?: number) => (n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`);
 const fmt2 = (n?: number) => (n == null || Number.isNaN(n) ? "—" : (+n).toFixed(2));
 const toFloat = (v: any) => {
@@ -173,17 +191,17 @@ export default function ParlayDrawer({
       setLoading(false);
     }
   }
-  async function startCheckout(price_id: string) {
-  const r = await fetch(`${API_BASE}/create-checkout-session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ price_id, user_email: "" }) // el email es opcional
-  });
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.detail || "Error al crear sesión");
-  window.location.assign(j.session_url);
-}
 
+  async function startCheckout(price_id: string) {
+    const r = await fetch(`${API_BASE}/create-checkout-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ price_id, user_email: "" }) // el email es opcional
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "Error al crear sesión");
+    window.location.assign(j.session_url);
+  }
 
   return (
     <>
@@ -214,6 +232,7 @@ export default function ParlayDrawer({
           zIndex: 80,
           padding: 16,
           overflowY: "auto",
+          paddingBottom: 110, // <- espacio para que el sticky no tape contenido
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -317,25 +336,7 @@ export default function ParlayDrawer({
           );
         })}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-          <button
-            onClick={generate}
-            disabled={loading}
-            style={{
-              ...pill,
-              cursor: "pointer",
-              borderColor: "#7c3aed",
-              background: "linear-gradient(135deg,#7c3aed55,#5b21b655)",
-            }}
-          >
-            {loading ? "Generando…" : "⚙️ Generar con IA"}
-          </button>
-          <button onClick={() => setOut(null)} style={{ ...pill, cursor: "pointer" }}>
-            Limpiar resultado
-          </button>
-        </div>
-
-        {/* salida */}
+        {/* error */}
         {err && (
           <div
             style={{
@@ -350,6 +351,7 @@ export default function ParlayDrawer({
           </div>
         )}
 
+        {/* salida */}
         {out && (
           <div style={{ ...panel, marginTop: 12 }}>
             <div style={{ fontWeight: 900, marginBottom: 10 }}>Resultado del Parley</div>
@@ -410,6 +412,34 @@ export default function ParlayDrawer({
             <div style={{ marginTop: 10, opacity: 0.85 }}>{out.summary}</div>
           </div>
         )}
+
+        {/* BARRA STICKY (siempre visible) */}
+        <div style={stickyBar}>
+          <div style={{ opacity: 0.9, fontSize: 12 }}>
+            Agrega entre 2 y 4 partidos. Puedes ingresar cuotas para calcular EV.
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={() => setOut(null)}
+              style={{ ...pill, cursor: "pointer" }}
+              title="Limpia el resultado mostrado"
+            >
+              Limpiar resultado
+            </button>
+            <button
+              onClick={generate}
+              disabled={loading}
+              style={{
+                ...pill,
+                cursor: "pointer",
+                borderColor: "#7c3aed",
+                background: "linear-gradient(135deg,#7c3aed55,#5b21b655)",
+              }}
+            >
+              {loading ? "Generando…" : "⚙️ Generar con IA"}
+            </button>
+          </div>
+        </div>
       </div>
     </>
   );
