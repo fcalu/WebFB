@@ -783,6 +783,38 @@ def billing_checkout(inp: BillingCheckoutIn):
     cancel_url  = f"{FRONTEND_URL}?canceled=true"
 
     if inp.method == "card":
+        # ✅ ahora soporta weekly
+        if inp.plan == "annual":
+            price_id = STRIPE_PRICE_ANNUAL
+        elif inp.plan == "weekly":
+            price_id = os.getenv("STRIPE_PRICE_WEEKLY")
+        else:
+            price_id = STRIPE_PRICE_MONTHLY
+
+        if not price_id:
+            raise HTTPException(400, "Falta STRIPE_PRICE_MONTHLY/ANNUAL/WEEKLY")
+
+        s = stripe.checkout.Session.create(
+            mode="subscription",
+            line_items=[{"price": price_id, "quantity": 1}],
+            customer_email=inp.user_email or None,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            allow_promotion_codes=True,
+        )
+        return {"provider": "stripe", "url": s.url}
+
+    if inp.method == "oxxo":
+        # (sin cambios, lo dejamos para más adelante)
+        ...
+
+    if not stripe.api_key:
+        raise HTTPException(503, "Stripe no configurado")
+
+    success_url = f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url  = f"{FRONTEND_URL}?canceled=true"
+
+    if inp.method == "card":
         price_id = STRIPE_PRICE_ANNUAL if inp.plan == "annual" else STRIPE_PRICE_MONTHLY
         if not price_id:
             raise HTTPException(400, "Falta STRIPE_PRICE_MONTHLY/ANNUAL")
