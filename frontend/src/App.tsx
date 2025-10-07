@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import BillingDrawer from "./components/BillingDrawer";
-// ✅ Componentes reales (ya no placeholders)
+import PremiumButton from "./components/PremiumButton";
+
+
+// ✅ Componentes reales
 import BestPickPro from "./components/BestPickPro";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ParlayDrawer from "./components/ParlayDrawer";
@@ -8,7 +10,6 @@ import BuilderDrawer from "./components/BuilderDrawer";
 import NavDrawer from "./components/NavDrawer";
 import IABootDrawer from "./components/IABootDrawer";
 import InstallBanner from "./components/InstallBanner";
-import PremiumDrawer from "./components/PremiumDrawer";
 import StakeModal from "./components/StakeModal";
 import BetHistoryDrawer from "./components/BetHistoryDrawer";
 
@@ -53,7 +54,6 @@ type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: 
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
 /* ===== Config (entorno) ===== */
-// Lee de Vite (VITE_API_BASE_URL) con fallback a window.__API_BASE__ y localhost.
 const API_BASE: string =
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
   (import.meta as any).env?.VITE_API_BASE_URL ||
@@ -95,7 +95,7 @@ function useLocalStorageState<T>(key: string, initial: T) {
 /** Fetch JSON tipado con AbortController. Adjunta Premium-Key si existe. */
 async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: string } = {}): Promise<T> {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 20_000); // 20s timeout
+  const id = setTimeout(() => controller.abort(), 20_000);
   try {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
@@ -114,14 +114,14 @@ async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: stri
   }
 }
 
-/** Mapea best_pick -> odd ingresada por usuario. Robusto a variaciones. */
+/** Mapea best_pick -> odd ingresada por usuario. */
 function oddFromBestPick(best: PredictResponse["best_pick"], odds: Odds): number | undefined {
   const market = best.market;
   const sel = best.selection;
   if (market === "1X2") {
-    if (sel === "1") return odds["1"]; // Local
-    if (sel === "2") return odds["2"]; // Visitante
-    if (sel === "X") return odds["X"]; // Empate
+    if (sel === "1") return odds["1"];
+    if (sel === "2") return odds["2"];
+    if (sel === "X") return odds["X"];
   }
   if (market === "Over 2.5") return odds.O2_5;
   if (market === "BTTS") {
@@ -195,21 +195,21 @@ const pill: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-/* ===== Cabecera con hamburguesa ===== */
+/* ===== Cabecera ===== */
 function Header({
   onOpenMenu,
   onOpenHistory,
   onOpenParlay,
   onOpenBuilder,
   onOpenIABoot,
-  onOpenPremium,
+  premiumSlot,
 }: {
   onOpenMenu: () => void;
   onOpenHistory: () => void;
   onOpenParlay: () => void;
   onOpenBuilder: () => void;
   onOpenIABoot: () => void;
-  onOpenPremium: () => void;
+  premiumSlot?: React.ReactNode;
 }) {
   return (
     <div
@@ -238,7 +238,6 @@ function Header({
             cursor: "pointer",
           }}
         >
-          {/* ícono hamburguesa simple */}
           <div style={{ display: "grid", gap: 4 }} aria-hidden>
             <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
             <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
@@ -334,23 +333,9 @@ function Header({
         >
           🤖 IA Boot
         </button>
-        <button
-          onClick={onOpenPremium}
-          title="Premium"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.12)",
-            color: "#d1d5db",
-            background: "linear-gradient(90deg, #7c3aed, #5b21b6)",
-            fontWeight: 800,
-          }}
-        >
-          👑 Premium
-        </button>
+
+        {/* 👑 Premium: injectado desde App */}
+        {premiumSlot}
       </div>
     </div>
   );
@@ -463,12 +448,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [data, setData] = useState<PredictResponse | null>(null);
-  const [premiumOpen, setPremiumOpen] = useState(false);
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
-  const [billingOpen, setBillingOpen] = useState(false);
-  // Parley + Historial + Stake
+  // Parley + Historial + Stake + Builder + Menu
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [stakeOpen, setStakeOpen] = useState(false);
@@ -495,7 +478,7 @@ export default function App() {
     [setPremiumKey]
   );
 
-  /** 🔁 Nuevo: canjeo de sesión de Stripe y guardado de premium_key */
+  /** 🔁 Canjeo de sesión de Stripe y guardado de premium_key */
   useEffect(() => {
     const url = new URL(window.location.href);
     const success = url.searchParams.get("success");
@@ -519,13 +502,12 @@ export default function App() {
       } catch (e: any) {
         alert(e?.message || "No se pudo canjear la sesión de Stripe.");
       } finally {
-        // Limpia los query params para no repetir este flujo al refrescar
         window.history.replaceState(null, "", window.location.pathname);
       }
     })();
   }, [setPremiumKey]);
 
-  // Cargar ligas (con abort y manejo de errores silencioso)
+  // Cargar ligas
   useEffect(() => {
     const controller = new AbortController();
     (async () => {
@@ -669,7 +651,7 @@ export default function App() {
           onOpenParlay={() => setParlayOpen(true)}
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenIABoot={() => setIaOpen(true)}
-          onOpenPremium={() => setPremiumOpen(true)}
+          premiumSlot={<PremiumButton apiBase={API_BASE} premiumKey={premiumKey} />}
         />
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
@@ -798,26 +780,7 @@ export default function App() {
 
         <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
 
-        <button
-          onClick={() => setBillingOpen(true)}
-          title="Premium"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.12)",
-            color: "#d1d5db",
-            background: "rgba(255,255,255,.06)",
-          }}
-        >
-          👑 Premium
-        </button>
-
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
-
-        <PremiumDrawer open={premiumOpen} onClose={() => setPremiumOpen(false)} onKeySubmit={handleKeySubmit} currentKey={premiumKey} API_BASE={API_BASE} />
 
         {/* Banner PWA */}
         <InstallBanner />
@@ -869,13 +832,6 @@ export default function App() {
             </div>
           </>
         )}
-        <BillingDrawer
-          open={billingOpen}
-          onClose={() => setBillingOpen(false)}
-          API_BASE={API_BASE}
-          currentKey={premiumKey}
-          onKeySaved={(k) => setPremiumKey(k)}
-        />
 
         {stakeDefaults && (
           <StakeModal
