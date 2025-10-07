@@ -560,6 +560,53 @@ def premium_find_or_create_for_customer(customer_id: str, subscription_id: str, 
                    current_period_end=int(current_period_end or 0))
     return pkey
 
+def _derive_cpe_from_sub(sub: dict) -> int:
+    """
+    Devuelve epoch del final del periodo actual de la suscripción `sub`,
+    intentando varias formas compatibles con la API clover:
+      1) sub["current_period_end"]
+      2) sub["current_period"]["end"]
+      3) Derivar desde price.recurring (interval, interval_count)
+    """
+    # 1) Campo clásico
+    try:
+        cpe = sub.get("current_period_end")
+        if cpe:
+            return int(cpe)
+    except Exception:
+        pass
+
+    # 2) Forma nueva anidada
+    try:
+        cp = sub.get("current_period") or {}
+        if cp.get("end"):
+            return int(cp["end"])
+    except Exception:
+        pass
+
+    # 3) Fallback: derivar desde el price.recurring
+    now = int(datetime.now(tz=timezone.utc).timestamp())
+    try:
+        items = (sub.get("items") or {}).get("data", [])
+        item = items[0] if items else {}
+        price = item.get("price") or {}
+        recurring = price.get("recurring") or {}
+        interval = (recurring.get("interval") or "month").lower()
+        count = int(recurring.get("interval_count") or 1)
+
+        seconds = {
+            "day": 86400,
+            "week": 7 * 86400,
+            "month": 30 * 86400,
+            "year": 365 * 86400,
+        }.get(interval, 30 * 86400)
+
+        return now + count * seconds
+    except Exception:
+        # Último fallback: 30 días
+        return now + 30 * 86400
+
+
 # Cache simple (clave → (ts, data))
 _CACHE: Dict[str, Tuple[float, dict]] = {}
 
@@ -847,6 +894,27 @@ def billing_checkout(inp: BillingCheckoutIn):
 
     raise HTTPException(400, "Método no soportado")
 
+def _sync_from_sub_id(sub_id: str):
+    # Expandimos para tener price y customer en la misma respuesta
+    sub = stripe.Subscription.retrieve(sub_id, expand=["items.data.price", "customer"])
+
+    # customer puede venir como string o dict expandido
+    customer_id = sub["customer"]["id"] if isinstance(sub.get("customer"), dict) else sub["customer"]
+    plan = sub["items"]["data"][0]["price"]["id"]
+    status = sub["status"]
+    cpe = _derive_cpe_from_sub(sub)
+
+    # email
+    try:
+        if isinstance(sub.get("customer"), dict):
+            email = sub["customer"].get("email") or ""
+        else:
+            cust = stripe.Customer.retrieve(customer_id)
+            email = cust.get("email") or ""
+    except Exception:
+        email = ""
+
+    premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, int(cpe))
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
@@ -864,66 +932,6 @@ async def stripe_webhook(request: Request):
     def _period_end(plan: str) -> int:
         now = int(datetime.now(tz=timezone.utc).timestamp())
         return now + (365*24*3600 if plan == "annual" else 30*24*3600)
-
-    def _derive_cpe_from_sub(sub: dict) -> int:
-        """
-    Devuelve epoch del final del periodo actual, intentando varias formas:
-    1) sub["current_period_end"] (forma clásica)
-    2) sub["current_period"]["end"] (forma nueva)
-    3) Derivar desde el price.recurring (interval, interval_count)
-    """
-    try:
-        cpe = sub.get("current_period_end")
-        if cpe:
-            return int(cpe)
-    except Exception:
-        pass
-
-    try:
-        cp = sub.get("current_period") or {}
-        if cp.get("end"):
-            return int(cp["end"])
-    except Exception:
-        pass
-
-    # Fallback: derivar desde el price
-    now = int(datetime.now(tz=timezone.utc).timestamp())
-    try:
-        item = (sub.get("items") or {}).get("data", [])[0] or {}
-        price = item.get("price") or {}
-        recurring = price.get("recurring") or {}
-        interval = (recurring.get("interval") or "month").lower()
-        count = int(recurring.get("interval_count") or 1)
-        seconds = {
-            "day": 86400,
-            "week": 7 * 86400,
-            "month": 30 * 86400,
-            "year": 365 * 86400,
-        }.get(interval, 30 * 86400)
-        return now + count * seconds
-    except Exception:
-        # Último fallback: 30 días
-        return now + 30 * 86400
-
-    def _sync_from_sub_id(sub_id: str):
-        # Puedes expandir si quieres garantizar que venga el price completo:
-     sub = stripe.Subscription.retrieve(sub_id, expand=["items.data.price", "customer"])
-     customer_id = sub["customer"] if isinstance(sub["customer"], str) else sub["customer"]["id"]
-     plan = sub["items"]["data"][0]["price"]["id"]
-     status = sub["status"]
-     cpe = _derive_cpe_from_sub(sub)
-
-    # email (si expandiste customer arriba, lo tienes directo)
-    try:
-        if isinstance(sub.get("customer"), dict):
-            email = sub["customer"].get("email") or ""
-        else:
-            cust = stripe.Customer.retrieve(customer_id)
-            email = cust.get("email") or ""
-    except Exception:
-        email = ""
-
-    premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, int(cpe))
 
 
     def _sub_id_from_invoice(inv: dict) -> Optional[str]:
@@ -1010,7 +1018,8 @@ def stripe_redeem(session_id: str):
         raise HTTPException(status_code=404, detail="No hay suscripción en la sesión")
 
     sub = stripe.Subscription.retrieve(sub_id, expand=["items.data.price", "customer"])
-    customer_id = sub["customer"] if isinstance(sub["customer"], str) else sub["customer"]["id"]
+
+    customer_id = sub["customer"]["id"] if isinstance(sub.get("customer"), dict) else sub["customer"]
     plan = sub["items"]["data"][0]["price"]["id"]
     status = sub["status"]
     cpe = _derive_cpe_from_sub(sub)
@@ -1026,6 +1035,8 @@ def stripe_redeem(session_id: str):
 
     pkey = premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, int(cpe))
     return {"premium_key": pkey, "status": status, "current_period_end": int(cpe)}
+
+
 class PortalIn(BaseModel):
     premium_key: str
 
