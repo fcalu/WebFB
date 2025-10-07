@@ -1,218 +1,306 @@
-import React, { useState } from "react";
+// src/components/PremiumDrawer.tsx
+import { useMemo, useState } from "react";
 
 type Props = {
   open: boolean;
   onClose: () => void;
   API_BASE: string;
-  currentKey: string;
-  isPremium?: boolean;
-  premiumKey?: string;
-  onKeySubmit: (key: string) => void;
+  currentKey?: string;
+  onKeySubmit?: (key: string) => void;
 };
 
-const PLANS = [
-  { id: "price_SEMANAL_ID", name: "SEMANAL", price: 70.0, interval: "Semanal" },
-  { id: "price_MENSUAL_ID", name: "MENSUAL", price: 130.0, interval: "Mensual" },
-  { id: "price_ANUAL_ID", name: "ANUAL", price: 1300.0, interval: "Anual" },
-];
+// ——— Ajusta aquí si quieres mostrar otros precios (solo para UI)
+const FALLBACK_PRICES = {
+  currency: "MXN",
+  weekly: 70_00,   // $70.00
+  monthly: 130_00, // $130.00
+  annual: 1199_00, // $1,199.00
+};
+
+function fmtMoney(cents?: number, currency: string = "MXN") {
+  if (typeof cents !== "number") return "—";
+  const amount = cents / 100;
+  return new Intl.NumberFormat("es-MX", { style: "currency", currency }).format(amount);
+}
 
 const overlay: React.CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,.65)",
-  display: "grid",
-  placeItems: "center",
+  background: "rgba(0,0,0,.55)",
+  backdropFilter: "blur(4px)",
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "flex-start",
+  padding: "24px 14px",
   zIndex: 60,
-  backdropFilter: "blur(5px)",
 };
-const card: React.CSSProperties = {
-  width: "min(900px, 92vw)",
-  background: "rgba(17,24,39,.98)",
-  border: "1px solid rgba(255,255,255,.15)",
+
+const sheet: React.CSSProperties = {
+  width: "min(1100px, 96vw)",
+  maxHeight: "92vh",
+  overflow: "auto",
+  background: "rgba(17,24,39,.98)", // #111827
+  border: "1px solid rgba(255,255,255,.12)",
   borderRadius: 16,
-  padding: 20,
+  padding: 18,
   color: "#e5e7eb",
-  boxShadow: "0 30px 80px rgba(0,0,0,.45)",
-  maxHeight: "90vh",
-  overflowY: "auto",
 };
+
 const pill: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
   padding: "8px 12px",
   borderRadius: 999,
-  background: "rgba(255,255,255,.06)",
   border: "1px solid rgba(255,255,255,.12)",
   color: "#d1d5db",
-  fontSize: 12,
-  cursor: "pointer",
+  background: "rgba(255,255,255,.06)",
+  whiteSpace: "nowrap",
 };
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  background: "#0f172a",
+
+const card: React.CSSProperties = {
+  background: "linear-gradient(180deg, rgba(124,58,237,.08), rgba(2,6,23,.35))",
+  border: "1px solid rgba(124,58,237,.35)",
+  borderRadius: 16,
+  padding: 18,
+};
+
+const cta: React.CSSProperties = {
+  display: "inline-block",
+  background: "linear-gradient(135deg, #7c3aed, #5b21b6)",
   color: "white",
-  border: "1px solid rgba(255,255,255,.18)",
-  borderRadius: 8,
-  padding: "10px 14px",
-  outline: "none",
-  fontSize: 14,
-};
-const buttonPrimary: React.CSSProperties = {
-  background: "linear-gradient(135deg,#7c3aed,#5b21b6)",
-  color: "#fff",
-  border: "none",
-  borderRadius: 12,
+  borderRadius: 999,
   padding: "12px 18px",
   fontWeight: 900,
+  border: "none",
   cursor: "pointer",
-  transition: "opacity 0.2s",
-};
-const planCardStyle: React.CSSProperties = {
-  padding: 20,
-  borderRadius: 16,
-  border: "1px solid rgba(255,255,255,.2)",
-  textAlign: "center",
-  background: "rgba(255,255,255,.05)",
-  flex: 1,
-  minWidth: "200px",
 };
 
-export default function PremiumDrawer({ open, onClose, API_BASE, onKeySubmit, currentKey }: Props) {
-  const [inputKey, setInputKey] = useState(currentKey);
-  const [loading, setLoading] = useState(false);
-  const isPremiumActive = currentKey.trim().length > 5;
+const small: React.CSSProperties = { fontSize: 12, opacity: 0.85 };
 
-  const handleKeySubmit = () => {
-    const trimmed = inputKey.trim();
-    onKeySubmit(trimmed);
-    if (!trimmed) return;
-    if (trimmed === currentKey.trim()) {
-      alert(isPremiumActive ? "Clave verificada. ¡Acceso Premium activo!" : "Clave guardada.");
-    } else {
-      alert("Clave guardada. Verifica tu acceso en el siguiente pronóstico.");
-    }
-  };
+export default function PremiumDrawer({
+  open,
+  onClose,
+  API_BASE,
+  currentKey,
+  onKeySubmit,
+}: Props) {
+  const [busy, setBusy] = useState<null | "weekly" | "monthly" | "annual">(null);
+  const [showKey, setShowKey] = useState(false);
+  const [manualKey, setManualKey] = useState("");
 
-  const handleCheckout = async (plan: { id: string; name: string }) => {
-    const userEmail = window.prompt("Email para la suscripción (Stripe):");
-    if (!userEmail) return;
+  const prices = useMemo(() => FALLBACK_PRICES, []);
+  const currency = prices.currency || "MXN";
 
-    setLoading(true);
+  async function startCheckout(plan: "weekly" | "monthly" | "annual") {
+    if (busy) return;
+    setBusy(plan);
     try {
-      const r = await fetch(`${API_BASE}/create-checkout-session`, {
+      const res = await fetch(`${API_BASE}/billing/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ price_id: plan.id, user_email: userEmail }),
+        body: JSON.stringify({ plan }),
       });
-
-      if (!r.ok) {
-        const t = await r.text();
-        throw new Error("Error al crear la sesión de pago: " + t);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.url) {
+        throw new Error(json?.detail || "No se pudo iniciar el checkout.");
       }
-
-      const data = (await r.json()) as { session_url?: string };
-      if (!data.session_url) throw new Error("El backend no devolvió session_url.");
-
-      // ✅ Redirección directa (sin redirectToCheckout) = sin error de tipos
-      window.location.href = data.session_url;
+      window.location.href = json.url as string;
     } catch (e: any) {
-      alert("Fallo el pago: " + e.message);
+      alert(e?.message || "Error al iniciar el pago.");
     } finally {
-      setLoading(false);
+      setBusy(null);
     }
-  };
+  }
 
   if (!open) return null;
 
   return (
     <div style={overlay} onClick={onClose}>
-      <div style={card} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
-          <h2 style={{ fontSize: 24, fontWeight: 900 }}>
-            👑 Acceso Premium{" "}
-            {isPremiumActive && <span style={{ marginLeft: 10, color: "#22c55e", fontSize: 16 }}>(ACTIVO)</span>}
-          </h2>
-          <button onClick={onClose} style={{ ...pill, opacity: 0.8 }}>Cerrar ✕</button>
+      <div style={sheet} onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 26, fontWeight: 900 }}>
+            👑 Acceso Premium
+          </div>
+          <button onClick={onClose} style={pill} aria-label="Cerrar premium">Cerrar ✕</button>
         </div>
 
-        <div style={{ display: "flex", gap: 25, flexWrap: "wrap" }}>
-          <div style={{ flex: 2, minWidth: "300px" }}>
-            <p style={{ opacity: 0.9, marginTop: 8, fontSize: 16, fontWeight: 600 }}>
+        {/* Grid: features + plans */}
+        <div
+          style={{
+            display: "grid",
+            gap: 16,
+            gridTemplateColumns: "1.1fr 1.9fr",
+          }}
+        >
+          {/* Features */}
+          <div style={{ padding: 6 }}>
+            <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>
               Desbloquea el poder del análisis profundo y las herramientas Pro:
-            </p>
-            <ul style={{ marginTop: 12, lineHeight: 2, paddingLeft: 20, listStyleType: "disc", color: "#d1d5db" }}>
-              <li>• <b>IA Boot</b>: análisis narrativo con picks fundamentados.</li>
-              <li>• <b>Parley Builder</b>: combinadas con EV cuando hay cuotas.</li>
-              <li>• <b>Selección Combinada</b>: 1X/BTTS/Over/Under/Córners/Tarjetas.</li>
-              <li>• <b>Gestión Pro</b>: Kelly, bankroll y registro de tickets.</li>
-              <li>• <b>Experiencia Pura</b>: sin anuncios + soporte prioritario.</li>
-            </ul>
-          </div>
-
-          <div style={{ flex: 3, minWidth: "350px" }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 15, color: "#a5b4fc" }}>
-              1. Elige tu Plan de Suscripción
-            </h3>
-
-            <div style={{ display: "flex", gap: 15, flexWrap: "wrap", marginBottom: 25 }}>
-              {PLANS.map((plan) => (
-                <div key={plan.id} style={planCardStyle}>
-                  <h4 style={{ color: "#f3f4f6", fontWeight: 800, fontSize: 18 }}>{plan.interval}</h4>
-                  <p style={{ fontSize: 26, fontWeight: 900, margin: "8px 0", color: "#7c3aed" }}>
-                    MXN {plan.price.toFixed(2)}
-                  </p>
-                  <p style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
-                    Precio por {plan.interval.toLowerCase()}
-                  </p>
-
-                    <button
-                      onClick={() => handleCheckout(plan)}
-                      disabled={loading}
-                      style={{ ...buttonPrimary, padding: "10px 16px", fontSize: 14, opacity: loading ? 0.6 : 1 }}
-                    >
-                      {loading ? "Cargando Pago..." : "Empezar prueba"}
-                    </button>
-                </div>
-              ))}
             </div>
 
-            <div style={{ borderTop: "1px solid rgba(255,255,255,.1)", paddingTop: 15 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 10, color: "#a5b4fc" }}>
-                2. Ingresar Clave de Acceso
-              </h3>
+            <ul style={{ lineHeight: 1.7, paddingLeft: 0, listStyle: "none" }}>
+              <li style={{ marginBottom: 10 }}>
+                <span style={pill}>🤖 IA Boot</span>&nbsp;
+                análisis narrativo con picks fundamentados.
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <span style={pill}>🧮 Parley Builder</span>&nbsp;
+                combinadas con EV cuando hay cuotas.
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <span style={pill}>🎯 Selección Combinada</span>&nbsp;
+                1X/BTTS/Over/Under/Córners/Tarjetas.
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <span style={pill}>💼 Gestión Pro</span>&nbsp;
+                Kelly, bankroll y registro de tickets.
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <span style={pill}>🚀 Experiencia Pura</span>&nbsp;
+                sin anuncios + soporte prioritario.
+              </li>
+            </ul>
 
-              <input
-                type="text"
-                placeholder="Pega aquí tu Clave Premium..."
-                value={inputKey}
-                onChange={(e) => setInputKey(e.target.value)}
-                style={inputStyle}
-              />
+            {/* Clave manual */}
+            <div style={{ marginTop: 16 }}>
+              <button
+                onClick={() => setShowKey((v) => !v)}
+                style={{ ...pill, cursor: "pointer" }}
+                aria-expanded={showKey}
+              >
+                {showKey ? "Ocultar" : "Ya tengo una clave"} 🔑
+              </button>
 
-              <div style={{ display: "flex", gap: 10, marginTop: 15, flexWrap: "wrap" }}>
-                <button
-                  style={{ ...buttonPrimary, opacity: !inputKey ? 0.6 : 1 }}
-                  onClick={handleKeySubmit}
-                  disabled={!inputKey}
+              {showKey && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    border: "1px dashed rgba(255,255,255,.2)",
+                    borderRadius: 12,
+                    padding: 12,
+                  }}
                 >
-                  {isPremiumActive ? "Guardar y Verificar" : "Guardar Clave de Acceso"}
-                </button>
+                  <div style={{ ...small, marginBottom: 6 }}>
+                    Pega tu clave Premium para activar tu acceso en este dispositivo.
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      value={manualKey}
+                      onChange={(e) => setManualKey(e.target.value)}
+                      placeholder="pmk_xxx..."
+                      style={{
+                        flex: 1,
+                        background: "#0f172a",
+                        border: "1px solid rgba(255,255,255,.16)",
+                        color: "white",
+                        borderRadius: 10,
+                        padding: "10px 12px",
+                        outline: "none",
+                      }}
+                    />
+                    <button
+                      style={cta}
+                      onClick={() => {
+                        const k = manualKey.trim();
+                        if (!k) return;
+                        onKeySubmit?.(k);
+                        alert("Clave guardada. ¡Listo para usar funciones Pro!");
+                      }}
+                    >
+                      Activar
+                    </button>
+                  </div>
+                  {currentKey && (
+                    <div style={{ ...small, marginTop: 6, opacity: 0.9 }}>
+                      Clave actual detectada: <b>{currentKey.slice(0, 8)}…</b>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
 
-                {isPremiumActive && (
+          {/* Plans */}
+          <div style={{ padding: 6 }}>
+            <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>
+              1. Elige tu Plan de Suscripción
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: 14,
+                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              }}
+            >
+              {/* Semanal */}
+              <div style={card}>
+                <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 10, textAlign: "center" }}>
+                  Semanal
+                </div>
+                <div style={{ fontSize: 32, fontWeight: 900, textAlign: "center" }}>
+                  {fmtMoney(prices.weekly, currency)}
+                </div>
+                <div style={{ ...small, textAlign: "center", marginTop: 6 }}>Precio por semanal</div>
+                <div style={{ textAlign: "center", marginTop: 14 }}>
                   <button
-                    onClick={() => onKeySubmit("")}
-                    style={{ ...pill, background: "none", borderColor: "#ef4444", color: "#fecaca", fontWeight: 700 }}
+                    style={cta}
+                    disabled={busy === "weekly"}
+                    onClick={() => startCheckout("weekly")}
                   >
-                    🗑️ Revocar Clave
+                    {busy === "weekly" ? "Abriendo…" : "Empezar prueba"}
                   </button>
-                )}
+                </div>
+              </div>
+
+              {/* Mensual */}
+              <div style={card}>
+                <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 10, textAlign: "center" }}>
+                  Mensual
+                </div>
+                <div style={{ fontSize: 32, fontWeight: 900, textAlign: "center" }}>
+                  {fmtMoney(prices.monthly, currency)}
+                </div>
+                <div style={{ ...small, textAlign: "center", marginTop: 6 }}>Precio por mensual</div>
+                <div style={{ textAlign: "center", marginTop: 14 }}>
+                  <button
+                    style={cta}
+                    disabled={busy === "monthly"}
+                    onClick={() => startCheckout("monthly")}
+                  >
+                    {busy === "monthly" ? "Abriendo…" : "Empezar prueba"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Anual */}
+              <div style={{ ...card, borderColor: "rgba(34,197,94,.35)", background: "linear-gradient(180deg, rgba(34,197,94,.10), rgba(2,6,23,.35))" }}>
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}>
+                  <span style={{ ...pill, borderColor: "rgba(34,197,94,.45)" }}>🛡️ Plan recomendado</span>
+                </div>
+                <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 10, textAlign: "center" }}>
+                  Anual
+                </div>
+                <div style={{ fontSize: 32, fontWeight: 900, textAlign: "center" }}>
+                  {fmtMoney(prices.annual, currency)}
+                </div>
+                <div style={{ ...small, textAlign: "center", marginTop: 6 }}>Precio por anual</div>
+                <div style={{ textAlign: "center", marginTop: 14 }}>
+                  <button
+                    style={{ ...cta, background: "linear-gradient(135deg, #22c55e, #16a34a)" }}
+                    disabled={busy === "annual"}
+                    onClick={() => startCheckout("annual")}
+                  >
+                    {busy === "annual" ? "Abriendo…" : "Empezar prueba"}
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "center" }}>
-              <span style={pill}>⚡ 3 días gratis (al pagar)</span>
-              <span style={pill}>🔒 Cancela cuando quieras</span>
+            <div style={{ ...small, marginTop: 12, opacity: 0.85 }}>
+              Pagos procesados de forma segura por Stripe. Puedes cancelar en cualquier momento desde tu perfil.
             </div>
           </div>
         </div>
