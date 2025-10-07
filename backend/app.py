@@ -850,19 +850,17 @@ def billing_checkout(inp: BillingCheckoutIn):
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
-    # 1) Validar firma
     payload = await request.body()
     sig = request.headers.get("stripe-signature")
     try:
         event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
     except Exception as e:
-        # Firma o payload inválido => 400
         raise HTTPException(status_code=400, detail=f"Webhook error: {e}")
 
     et  = event.get("type")
     obj = event["data"]["object"]
 
-    # Helpers
+    # ---------- helpers ----------
     def _period_end(plan: str) -> int:
         now = int(datetime.now(tz=timezone.utc).timestamp())
         return now + (365*24*3600 if plan == "annual" else 30*24*3600)
@@ -870,38 +868,54 @@ async def stripe_webhook(request: Request):
     def _sync_from_sub_id(sub_id: str):
         sub = stripe.Subscription.retrieve(sub_id)
         customer_id = sub["customer"]
-        plan = sub["items"]["data"][0]["price"]["id"]
+        plan   = sub["items"]["data"][0]["price"]["id"]
         status = sub["status"]
-        cpe = int(sub["current_period_end"])
-        cust = stripe.Customer.retrieve(customer_id)
-        email = cust.get("email") or ""
+        cpe    = int(sub["current_period_end"])
+        cust   = stripe.Customer.retrieve(customer_id)
+        email  = cust.get("email") or ""
         premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, cpe)
 
-    # 2) Checkout completado
+    def _sub_id_from_invoice(inv: dict) -> Optional[str]:
+        # 1) viejo: inv.subscription
+        sid = inv.get("subscription")
+        if sid: return sid
+        # 2) nuevo: inv.subscription_details.subscription
+        sd = (inv.get("subscription_details") or {}).get("subscription")
+        if sd: return sd
+        # 3) nuevo: inv.parent.subscription_details.subscription
+        pd = ((inv.get("parent") or {}).get("subscription_details") or {}).get("subscription")
+        if pd: return pd
+        # 4) línea 0 → parent.subscription_item_details.subscription
+        try:
+            line0 = (inv.get("lines") or {}).get("data", [])[0] or {}
+            return ((line0.get("parent") or {}).get("subscription_item_details") or {}).get("subscription")
+        except Exception:
+            return None
+
+    # ---------- 1) Checkout completado ----------
     if et == "checkout.session.completed":
-        # a) SUSCRIPCIÓN (tarjeta): activamos via subscription_id
         if obj.get("mode") == "subscription":
             sub_id = obj.get("subscription")
             if sub_id:
                 _sync_from_sub_id(sub_id)
-        # b) PAGO ÚNICO (OXXO): NO activar aquí. Esperamos al payment_intent.succeeded.
+        # Si el modo fuera "payment" (OXXO), no activamos aquí. Esperamos a payment_intent.succeeded.
 
-    # 3) OXXO confirmado: cuando el voucher se liquida llega payment_intent.succeeded
+    # ---------- 2) OXXO confirmado ----------
     elif et == "payment_intent.succeeded":
-        pi = obj  # PaymentIntent
+        pi = obj
         pm_types = pi.get("payment_method_types") or []
         if "oxxo" in pm_types:
             meta = pi.get("metadata") or {}
             plan = (meta.get("plan") or "monthly").lower()
 
-            # Mejor esfuerzo para obtener email
+            # mejor esfuerzo para email
             email = ""
             try:
                 if pi.get("customer"):
                     cust = stripe.Customer.retrieve(pi["customer"])
                     email = cust.get("email") or ""
-                elif pi.get("charges", {}).get("data"):
-                    email = (pi["charges"]["data"][0].get("billing_details") or {}).get("email") or ""
+                elif (pi.get("charges") or {}).get("data"):
+                    email = ((pi["charges"]["data"][0].get("billing_details") or {}).get("email")) or ""
             except Exception:
                 pass
 
@@ -910,25 +924,32 @@ async def stripe_webhook(request: Request):
                 premium_key=pkey,
                 email=email,
                 customer_id=pi.get("customer") or "",
-                subscription_id=pi["id"],   # guardamos el PI como id "subscription"
+                subscription_id=pi["id"],   # guardamos el PaymentIntent para OXXO
                 plan=f"oxxo_{plan}",
                 status="active",
                 current_period_end=_period_end(plan),
             )
 
-    # 4) Renovaciones / cambios
-    elif et in ("invoice.payment_succeeded", "customer.subscription.updated"):
-        sub_id = obj.get("subscription") or obj.get("id")
+    # ---------- 3) Renovaciones / cambios ----------
+    elif et == "invoice.payment_succeeded":
+        sub_id = _sub_id_from_invoice(obj)
         if sub_id:
             _sync_from_sub_id(sub_id)
 
-    # 5) Cancelaciones / fallos
-    elif et in ("customer.subscription.deleted", "invoice.payment_failed"):
-        sub_id = obj.get("id") if et == "customer.subscription.deleted" else obj.get("subscription")
+    elif et == "customer.subscription.updated":
+        _sync_from_sub_id(obj.get("id"))
+
+    # ---------- 4) Cancelaciones / fallos ----------
+    elif et == "invoice.payment_failed":
+        sub_id = _sub_id_from_invoice(obj)
         if sub_id:
             _sync_from_sub_id(sub_id)
+
+    elif et == "customer.subscription.deleted":
+        _sync_from_sub_id(obj.get("id"))
 
     return {"ok": True}
+
 
 @app.get("/stripe/redeem")
 def stripe_redeem(session_id: str):
