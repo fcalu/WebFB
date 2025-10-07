@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import App from "./App";
-import Landing from "./pages/Landing"; // ← lo creamos en el paso 3
+import Landing from "./pages/Landing"; // ← lo creamos en el paso 3 
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
