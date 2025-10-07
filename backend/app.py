@@ -865,15 +865,66 @@ async def stripe_webhook(request: Request):
         now = int(datetime.now(tz=timezone.utc).timestamp())
         return now + (365*24*3600 if plan == "annual" else 30*24*3600)
 
+    def _derive_cpe_from_sub(sub: dict) -> int:
+        """
+    Devuelve epoch del final del periodo actual, intentando varias formas:
+    1) sub["current_period_end"] (forma clásica)
+    2) sub["current_period"]["end"] (forma nueva)
+    3) Derivar desde el price.recurring (interval, interval_count)
+    """
+    try:
+        cpe = sub.get("current_period_end")
+        if cpe:
+            return int(cpe)
+    except Exception:
+        pass
+
+    try:
+        cp = sub.get("current_period") or {}
+        if cp.get("end"):
+            return int(cp["end"])
+    except Exception:
+        pass
+
+    # Fallback: derivar desde el price
+    now = int(datetime.now(tz=timezone.utc).timestamp())
+    try:
+        item = (sub.get("items") or {}).get("data", [])[0] or {}
+        price = item.get("price") or {}
+        recurring = price.get("recurring") or {}
+        interval = (recurring.get("interval") or "month").lower()
+        count = int(recurring.get("interval_count") or 1)
+        seconds = {
+            "day": 86400,
+            "week": 7 * 86400,
+            "month": 30 * 86400,
+            "year": 365 * 86400,
+        }.get(interval, 30 * 86400)
+        return now + count * seconds
+    except Exception:
+        # Último fallback: 30 días
+        return now + 30 * 86400
+
     def _sync_from_sub_id(sub_id: str):
-        sub = stripe.Subscription.retrieve(sub_id)
-        customer_id = sub["customer"]
-        plan   = sub["items"]["data"][0]["price"]["id"]
-        status = sub["status"]
-        cpe    = int(sub["current_period_end"])
-        cust   = stripe.Customer.retrieve(customer_id)
-        email  = cust.get("email") or ""
-        premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, cpe)
+        # Puedes expandir si quieres garantizar que venga el price completo:
+     sub = stripe.Subscription.retrieve(sub_id, expand=["items.data.price", "customer"])
+     customer_id = sub["customer"] if isinstance(sub["customer"], str) else sub["customer"]["id"]
+     plan = sub["items"]["data"][0]["price"]["id"]
+     status = sub["status"]
+     cpe = _derive_cpe_from_sub(sub)
+
+    # email (si expandiste customer arriba, lo tienes directo)
+    try:
+        if isinstance(sub.get("customer"), dict):
+            email = sub["customer"].get("email") or ""
+        else:
+            cust = stripe.Customer.retrieve(customer_id)
+            email = cust.get("email") or ""
+    except Exception:
+        email = ""
+
+    premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, int(cpe))
+
 
     def _sub_id_from_invoice(inv: dict) -> Optional[str]:
         # 1) viejo: inv.subscription
@@ -957,16 +1008,24 @@ def stripe_redeem(session_id: str):
     sub_id = sess.get("subscription")
     if not sub_id:
         raise HTTPException(status_code=404, detail="No hay suscripción en la sesión")
-    sub = stripe.Subscription.retrieve(sub_id)
-    customer_id = sub["customer"]
+
+    sub = stripe.Subscription.retrieve(sub_id, expand=["items.data.price", "customer"])
+    customer_id = sub["customer"] if isinstance(sub["customer"], str) else sub["customer"]["id"]
     plan = sub["items"]["data"][0]["price"]["id"]
     status = sub["status"]
-    cpe = int(sub["current_period_end"])
-    cust = stripe.Customer.retrieve(customer_id)
-    email = cust.get("email") or ""
+    cpe = _derive_cpe_from_sub(sub)
 
-    pkey = premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, cpe)
-    return {"premium_key": pkey, "status": status, "current_period_end": cpe}
+    try:
+        if isinstance(sub.get("customer"), dict):
+            email = sub["customer"].get("email") or ""
+        else:
+            cust = stripe.Customer.retrieve(customer_id)
+            email = cust.get("email") or ""
+    except Exception:
+        email = ""
+
+    pkey = premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, int(cpe))
+    return {"premium_key": pkey, "status": status, "current_period_end": int(cpe)}
 class PortalIn(BaseModel):
     premium_key: str
 
