@@ -452,18 +452,14 @@ export default function App() {
   const [iaOpen, setIaOpen] = useState(false);
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
   const [introOpen, setIntroOpen] = useState(!localStorage.getItem("fm_intro_seen"));
-  const [premiumOpen, setPremiumOpen] = useState(false);
+  
   // Parley + Historial + Stake + Builder + Menu
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [stakeOpen, setStakeOpen] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
-  const goPremium = () => {
-  setIntroOpen(false);
-  localStorage.setItem("fm_intro_seen", "1");
-  setPremiumOpen(true);   // ← esto abrirá tu PremiumDrawer
-};
+
   
   const mounted = useRef(true);
   useEffect(() => {
@@ -472,7 +468,7 @@ export default function App() {
       mounted.current = false;
     };
   }, []);
- 
+  
   // Guardar/Revocar clave premium
   const handleKeySubmit = useCallback(
     (newKey: string) => {
@@ -784,14 +780,7 @@ export default function App() {
         <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} API_BASE={API_BASE} isPremium={!!premiumKey} premiumKey={premiumKey} />
 
         <BuilderDrawer open={builderOpen} onClose={() => setBuilderOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
-        <IntroModal
-          open={introOpen}
-          onClose={() => {
-            setIntroOpen(false);
-            localStorage.setItem("fm_intro_seen", "1");
-          }}
-          onGoPremium={goPremium}
-        />
+
         <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
 
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
@@ -846,7 +835,7 @@ export default function App() {
             </div>
           </>
         )}
-        
+
         {stakeDefaults && (
           <StakeModal
             open={stakeOpen}
