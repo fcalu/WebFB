@@ -1,6 +1,7 @@
 // src/components/BuilderDrawer.tsx
 import { useEffect, useMemo, useState } from "react";
 import TicketCard from "./TicketCard";
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -88,6 +89,7 @@ export default function BuilderDrawer({
   home,
   away,
   odds,
+  premiumKey,
 }: Props) {
   const [leagues, setLeagues] = useState<string[]>([]);
   const [teams, setTeams] = useState<string[]>([]);
@@ -100,7 +102,7 @@ export default function BuilderDrawer({
   const [err, setErr] = useState("");
   const [result, setResult] = useState<BuilderOut | null>(null);
 
-  // Al abrir, precargar listas y seed con lo que viene de props
+  // Al abrir, precargar listas y seed de props
   useEffect(() => {
     if (!open) return;
     setSelLeague(league || "");
@@ -109,14 +111,13 @@ export default function BuilderDrawer({
     setResult(null);
     setErr("");
 
-    // Carga ligas
     fetch(`${API_BASE}/leagues`)
       .then((r) => r.json())
       .then((d: ApiLeagues) => setLeagues(d.leagues ?? []))
       .catch(() => setLeagues([]));
   }, [open, API_BASE, league, home, away]);
 
-  // Cuando cambia la liga, cargar equipos
+  // Cargar equipos cuando cambia la liga
   useEffect(() => {
     setTeams([]);
     if (!selLeague) return;
@@ -143,18 +144,25 @@ export default function BuilderDrawer({
     setErr("");
     setResult(null);
     try {
+      const trimmedKey = premiumKey?.trim() || "";
+
       const body: any = {
         league: selLeague,
         home_team: selHome,
         away_team: selAway,
+        ...(trimmedKey ? { premium_key: trimmedKey } : {}),
       };
       if (odds && Object.keys(odds).length) body.odds = odds;
 
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (trimmedKey) (headers as any)["X-Premium-Key"] = trimmedKey;
+
       const res = await fetch(`${API_BASE}/builder/suggest`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(body),
       });
+
       if (!res.ok) throw new Error(await res.text());
       const json: BuilderOut = await res.json();
       setResult(json);
@@ -164,26 +172,35 @@ export default function BuilderDrawer({
       setLoading(false);
     }
   }
-  {result?.legs?.map((leg, i) => (
-  <div key={i} style={{ marginTop: 8 }}>
-    <TicketCard
-      title={leg.market}
-      subtitle={leg.selection}
-      probPct={leg.prob_pct}
-    />
-  </div>
-))}
+
   if (!open) return null;
 
   return (
     <div style={sheet} onClick={onClose}>
       <div style={card} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <div style={{ fontSize: 20, fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 8,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 20,
+              fontWeight: 900,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
             🎯 Generador de selección
           </div>
-          <button onClick={onClose} style={pill}>Cerrar ✕</button>
+          <button onClick={onClose} style={pill}>
+            Cerrar ✕
+          </button>
         </div>
 
         {/* Form */}
@@ -197,7 +214,9 @@ export default function BuilderDrawer({
             >
               <option value="">— Selecciona liga —</option>
               {leagues.map((l) => (
-                <option key={l} value={l}>{l}</option>
+                <option key={l} value={l}>
+                  {l}
+                </option>
               ))}
             </select>
           </div>
@@ -212,7 +231,9 @@ export default function BuilderDrawer({
               placeholder="Local"
             />
             <datalist id="builder_home_list">
-              {filteredHome.map((t) => <option key={t} value={t} />)}
+              {filteredHome.map((t) => (
+                <option key={t} value={t} />
+              ))}
             </datalist>
           </div>
 
@@ -226,27 +247,22 @@ export default function BuilderDrawer({
               placeholder="Visitante"
             />
             <datalist id="builder_away_list">
-              {filteredAway.map((t) => <option key={t} value={t} />)}
+              {filteredAway.map((t) => (
+                <option key={t} value={t} />
+              ))}
             </datalist>
           </div>
         </div>
-        <div style={{
-            marginTop: 12,
-            background: "rgba(255,255,255,.06)",
-            border: "1px solid rgba(255,255,255,.12)",
-            borderRadius: 12,
-            padding: 14
-            }}>
-            <div style={{ fontWeight: 900 }}>Probabilidad combinada</div>
-            <div style={{ marginTop: 6, fontSize: 18, fontWeight: 900 }}>
-                {result?.combo_prob_pct?.toFixed(2)}%
-            </div>
-            <div style={{ opacity: .9, marginTop: 4 }}>
-                {result?.summary}
-            </div>
-            </div>
+
         {/* Actions */}
-        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            marginTop: 14,
+          }}
+        >
           <button
             onClick={onBuild}
             disabled={!canBuild || loading}
@@ -280,20 +296,37 @@ export default function BuilderDrawer({
         {/* Resultado */}
         {result && (
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>Selección sugerida</div>
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>
+              Selección sugerida
+            </div>
+
             <div style={{ display: "grid", gap: 10 }}>
               {result.legs.map((leg, i) => (
-                <div key={i} style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.12)", borderRadius: 12, padding: 12 }}>
-                  <div style={{ fontWeight: 800 }}>{leg.market}</div>
-                  <div style={{ marginTop: 2 }}>{leg.selection}</div>
-                  <div style={{ marginTop: 4, opacity: 0.9 }}>Prob: {leg.prob_pct.toFixed(2)}%</div>
+                <div key={i} style={{ marginTop: 8 }}>
+                  <TicketCard
+                    title={leg.market}
+                    subtitle={leg.selection}
+                    probPct={leg.prob_pct}
+                  />
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: 10, fontWeight: 800 }}>
-              Probabilidad combinada: {result.combo_prob_pct.toFixed(2)}%
+
+            <div
+              style={{
+                marginTop: 12,
+                background: "rgba(255,255,255,.06)",
+                border: "1px solid rgba(255,255,255,.12)",
+                borderRadius: 12,
+                padding: 14,
+              }}
+            >
+              <div style={{ fontWeight: 900 }}>Probabilidad combinada</div>
+              <div style={{ marginTop: 6, fontSize: 18, fontWeight: 900 }}>
+                {result.combo_prob_pct.toFixed(2)}%
+              </div>
+              <div style={{ opacity: 0.9, marginTop: 4 }}>{result.summary}</div>
             </div>
-            <div style={{ marginTop: 6, opacity: 0.9 }}>{result.summary}</div>
           </div>
         )}
       </div>
