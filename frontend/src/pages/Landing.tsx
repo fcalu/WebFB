@@ -1,6 +1,6 @@
 // frontend/src/pages/Landing.tsx
 import { useNavigate } from "react-router-dom";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /* === API base como en App.tsx === */
 const API_BASE: string =
@@ -8,7 +8,7 @@ const API_BASE: string =
   (import.meta as any).env?.VITE_API_BASE_URL ||
   "http://localhost:8000";
 
-/* === Estilos inline (match con tu app) === */
+/* === Estilos === */
 const page: React.CSSProperties = {
   minHeight: "100vh",
   background:
@@ -61,18 +61,50 @@ const btnGhost: React.CSSProperties = {
   cursor: "pointer",
 };
 
-/* ==== Componente ==== */
+type PriceInfo = {
+  id: string;
+  amount: number;      // en moneda (ej: 130.00)
+  currency: string;    // "MXN"
+  interval: "week" | "month" | "year";
+  interval_count: number;
+};
+
 export default function Landing() {
   const nav = useNavigate();
   const plansRef = useRef<HTMLDivElement | null>(null);
 
-  // Email opcional para prellenar en Stripe
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState<null | "weekly" | "monthly" | "annual">(null);
+  const [prices, setPrices] = useState<{ weekly?: PriceInfo; monthly?: PriceInfo; annual?: PriceInfo }>({});
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(`${API_BASE}/billing/prices`);
+        const j = await r.json();
+        setPrices({
+          weekly: j.weekly || undefined,
+          monthly: j.monthly || undefined,
+          annual: j.annual || undefined,
+        });
+      } catch {
+        // Si falla, se quedan los placeholders
+      }
+    })();
+  }, []);
 
   const scrollToPlans = () => {
     plansRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  function fmt(p?: PriceInfo) {
+    if (!p) return "—";
+    try {
+      return new Intl.NumberFormat("es-MX", { style: "currency", currency: p.currency || "MXN" }).format(p.amount);
+    } catch {
+      return `MXN ${p.amount?.toFixed(2)}`;
+    }
+  }
 
   async function goCheckout(plan: "weekly" | "monthly" | "annual") {
     try {
@@ -83,9 +115,9 @@ export default function Landing() {
         body: JSON.stringify({ plan, method: "card", user_email: email.trim() || null }),
       });
       if (!res.ok) throw new Error(await res.text());
-      const j = await res.json(); // { provider: "stripe", url: "..." }
+      const j = await res.json(); // { provider:"stripe", url:"..." }
       if (!j?.url) throw new Error("No se recibió URL de Stripe.");
-      window.location.href = j.url; // 🔁 redirige al Checkout de Stripe
+      window.location.href = j.url;
     } catch (e: any) {
       alert(e?.message || "No se pudo iniciar el checkout.");
     } finally {
@@ -177,9 +209,7 @@ export default function Landing() {
 
           {/* Email opcional */}
           <div style={{ maxWidth: 520, margin: "12px auto 0" }}>
-            <label style={{ fontSize: 12, opacity: 0.85 }}>
-              (Opcional) Email para prellenar en Stripe
-            </label>
+            <label style={{ fontSize: 12, opacity: 0.85 }}>(Opcional) Email para prellenar en Stripe</label>
             <input
               type="email"
               placeholder="tu@email.com"
@@ -206,7 +236,7 @@ export default function Landing() {
               gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))",
             }}
           >
-            {/* Weekly */}
+            {/* Semanal */}
             <div style={card}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <b>Semanal</b>
@@ -222,7 +252,8 @@ export default function Landing() {
                   Flex
                 </span>
               </div>
-              <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>MXN —/sem</div>
+              <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{fmt(prices.weekly)}</div>
+              <div style={{ opacity: 0.8, fontSize: 13, marginTop: 2 }}>por semana</div>
               <ul style={{ marginTop: 8, opacity: 0.9, paddingLeft: 18 }}>
                 <li>Generador de Selección</li>
                 <li>Parlay inteligente (2–4 legs)</li>
@@ -237,7 +268,7 @@ export default function Landing() {
               </button>
             </div>
 
-            {/* Monthly */}
+            {/* Mensual */}
             <div style={card}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <b>Mensual</b>
@@ -253,7 +284,8 @@ export default function Landing() {
                   Recomendado
                 </span>
               </div>
-              <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>MXN —/mes</div>
+              <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{fmt(prices.monthly)}</div>
+              <div style={{ opacity: 0.8, fontSize: 13, marginTop: 2 }}>por mes</div>
               <ul style={{ marginTop: 8, opacity: 0.9, paddingLeft: 18 }}>
                 <li>Todo lo del Semanal</li>
                 <li>IA Boot (resumen y picks)</li>
@@ -268,7 +300,7 @@ export default function Landing() {
               </button>
             </div>
 
-            {/* Annual */}
+            {/* Anual */}
             <div style={card}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <b>Anual</b>
@@ -281,13 +313,14 @@ export default function Landing() {
                     background: "rgba(255,255,255,.06)",
                   }}
                 >
-                  -{new Date().getFullYear()}%
+                  Mejor precio
                 </span>
               </div>
-              <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>MXN —/año</div>
+              <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{fmt(prices.annual)}</div>
+              <div style={{ opacity: 0.8, fontSize: 13, marginTop: 2 }}>por año</div>
               <ul style={{ marginTop: 8, opacity: 0.9, paddingLeft: 18 }}>
                 <li>Todo lo del Mensual</li>
-                <li>Mejor precio/mes</li>
+                <li>Mejor costo por mes</li>
                 <li>Soporte prioritario</li>
               </ul>
               <button
