@@ -56,7 +56,7 @@ type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES
 /* ===== Config (entorno) ===== */
 const API_BASE: string =
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
-  (import.meta as any).env?.VITE_API_BASE_URL ||
+  (import.meta as any).env?.VITE_API_BASE ||           // <-- usa VITE_API_BASE
   "http://localhost:8000";
 
 /* ===== Helpers ===== */
@@ -469,6 +469,15 @@ export default function App() {
     };
   }, []);
   
+// abre el PremiumButton desde IntroModal
+const goPremium = useCallback(() => {
+  setIntroOpen(false);
+  localStorage.setItem("fm_intro_seen", "1");
+  // Disparamos un evento global que escuchará PremiumButton
+  document.dispatchEvent(new CustomEvent("open-premium"));
+}, []);
+
+
   // Guardar/Revocar clave premium
   const handleKeySubmit = useCallback(
     (newKey: string) => {
@@ -483,32 +492,33 @@ export default function App() {
 
   /** 🔁 Canjeo de sesión de Stripe y guardado de premium_key */
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const success = url.searchParams.get("success");
-    const sessionId = url.searchParams.get("session_id");
-    const canceled = url.searchParams.get("canceled");
+  const url = new URL(window.location.href);
+  const success = url.searchParams.get("success");
+  const sessionId = url.searchParams.get("session_id");
+  const canceled = url.searchParams.get("canceled");
 
-    (async () => {
-      try {
-        if (success === "true" && sessionId) {
-          type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
-          const j = await fetchJSON<RedeemResp>(`${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`);
-          if (j?.premium_key) {
-            setPremiumKey(j.premium_key);
-            alert("¡Premium activado! Tu clave quedó guardada.");
-          } else {
-            alert("Pago correcto, pero no se pudo recuperar la clave. Contacta soporte.");
-          }
-        } else if (canceled === "true") {
-          alert("El pago fue cancelado. Puedes intentarlo de nuevo.");
+  (async () => {
+    try {
+      if (success === "true" && sessionId) {
+        type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
+        const j = await fetchJSON<RedeemResp>(`${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`);
+        if (j?.premium_key) {
+          setPremiumKey(j.premium_key);
+          alert("¡Premium activado! Tu clave quedó guardada.");
+        } else {
+          alert("Pago correcto, pero no se pudo recuperar la clave. Contacta soporte.");
         }
-      } catch (e: any) {
-        alert(e?.message || "No se pudo canjear la sesión de Stripe.");
-      } finally {
-        window.history.replaceState(null, "", window.location.pathname);
+      } else if (canceled === "true") {
+        alert("El pago fue cancelado. Puedes intentarlo de nuevo.");
       }
-    })();
-  }, [setPremiumKey]);
+    } catch (e: any) {
+      alert(e?.message || "No se pudo canjear la sesión de Stripe.");
+    } finally {
+      // limpia la query: /app
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  })();
+}, [setPremiumKey]);
 
   // Cargar ligas
   useEffect(() => {
@@ -655,8 +665,16 @@ export default function App() {
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenIABoot={() => setIaOpen(true)}
           premiumSlot={<PremiumButton apiBase={API_BASE} premiumKey={premiumKey} />}
+          
         />
-
+        <IntroModal
+        open={!!introOpen}
+        onClose={() => {
+          setIntroOpen(false);
+          localStorage.setItem("fm_intro_seen", "1");
+        }}
+        onGoPremium={goPremium}
+      />
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
           <label style={{ fontSize: 12, opacity: 0.8 }}>
             <input type="checkbox" checked={expert} onChange={(e) => setExpert(e.target.checked)} />

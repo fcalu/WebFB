@@ -806,8 +806,8 @@ def create_checkout_session(inp: CheckoutIn):
         raise HTTPException(status_code=503, detail="Stripe no configurado")
 
     try:
-        success_url = f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}"
-        cancel_url = f"{FRONTEND_URL}?canceled=true"
+        success_url = f"{FRONTEND_URL}/app?success=true&session_id={{CHECKOUT_SESSION_ID}}"
+        cancel_url  = f"{FRONTEND_URL}/app?canceled=true"
 
         checkout_session = stripe.checkout.Session.create(
             mode="subscription",
@@ -826,8 +826,8 @@ def billing_checkout(inp: BillingCheckoutIn):
     if not stripe.api_key:
         raise HTTPException(503, "Stripe no configurado")
 
-    success_url = f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url  = f"{FRONTEND_URL}?canceled=true"
+    success_url = f"{FRONTEND_URL}/app?success=true&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url  = f"{FRONTEND_URL}/app?canceled=true"
 
     if inp.method == "card":
         # ✅ ahora soporta weekly
