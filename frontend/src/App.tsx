@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import PremiumButton from "./components/PremiumButton";
 import IntroModal from "./components/IntroModal";
 
 // ✅ Componentes reales
@@ -43,7 +42,7 @@ type PredictResponse = {
     market: "1X2" | "Over 2.5" | "BTTS" | string;
     selection: "1" | "X" | "2" | "Sí" | "No" | string;
     prob_pct: number;
-    confidence: number; // 0..1
+    confidence: number;
     reasons: string[];
   };
   summary: string;
@@ -53,7 +52,6 @@ type PredictResponse = {
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
-/* ===== Suscripción (UI verificada) ===== */
 type SubscriptionState = {
   active: boolean;
   status?: string | null;
@@ -88,7 +86,6 @@ const toFloat = (v: unknown) => {
 };
 
 const pct = (n?: number) => (n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`);
-
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
@@ -145,7 +142,7 @@ function oddFromBestPick(best: PredictResponse["best_pick"], odds: Odds): number
   }
   if (market === "Over 2.5") return odds.O2_5;
   if (market === "BTTS") {
-    const yesish = sel.toLowerCase();
+    const yesish = String(sel).toLowerCase();
     if (["sí", "si", "yes", "y"].includes(yesish)) return odds.BTTS_YES;
   }
   return undefined;
@@ -161,68 +158,30 @@ const page: React.CSSProperties = {
     "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Inter,Helvetica,Arial,Apple Color Emoji,Segoe UI Emoji",
 };
 
-const wrap: React.CSSProperties = {
-  maxWidth: 900,
-  margin: "0 auto",
-  padding: "18px 14px 120px",
-};
-
+const wrap: React.CSSProperties = { maxWidth: 900, margin: "0 auto", padding: "18px 14px 120px" };
 const panel: React.CSSProperties = {
   background: "rgba(255,255,255,.05)",
   border: "1px solid rgba(255,255,255,.10)",
   borderRadius: 16,
   padding: 14,
 };
-
-const labelCss: React.CSSProperties = {
-  color: "#a5b4fc",
-  fontSize: 12,
-  marginBottom: 6,
-  fontWeight: 800,
-  letterSpacing: 0.3,
-};
-
+const labelCss: React.CSSProperties = { color: "#a5b4fc", fontSize: 12, marginBottom: 6, fontWeight: 800, letterSpacing: 0.3 };
 const inputCss: React.CSSProperties = {
-  width: "100%",
-  background: "#0f172a",
-  color: "white",
-  border: "1px solid rgba(255,255,255,.18)",
-  borderRadius: 12,
-  padding: "12px 14px",
-  outline: "none",
+  width: "100%", background: "#0f172a", color: "white",
+  border: "1px solid rgba(255,255,255,.18)", borderRadius: 12, padding: "12px 14px", outline: "none",
 };
-
 const btnPrimary: React.CSSProperties = {
-  background: "linear-gradient(135deg, #7c3aed, #5b21b6)",
-  color: "white",
-  border: "none",
-  borderRadius: 14,
-  padding: "14px 18px",
-  fontWeight: 900,
-  fontSize: 16,
+  background: "linear-gradient(135deg, #7c3aed, #5b21b6)", color: "white", border: "none",
+  borderRadius: 14, padding: "14px 18px", fontWeight: 900, fontSize: 16,
 };
-
 const pill: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 8,
-  padding: "6px 10px",
-  borderRadius: 999,
-  background: "rgba(255,255,255,.06)",
-  border: "1px solid rgba(255,255,255,.10)",
-  color: "#d1d5db",
-  fontSize: 12,
-  whiteSpace: "nowrap",
+  display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 999,
+  background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.10)", color: "#d1d5db", fontSize: 12, whiteSpace: "nowrap",
 };
 
 /* ===== Cabecera ===== */
 function Header({
-  onOpenMenu,
-  onOpenHistory,
-  onOpenParlay,
-  onOpenBuilder,
-  onOpenIABoot,
-  premiumSlot,
+  onOpenMenu, onOpenHistory, onOpenParlay, onOpenBuilder, onOpenIABoot, premiumSlot,
 }: {
   onOpenMenu: () => void;
   onOpenHistory: () => void;
@@ -232,30 +191,14 @@ function Header({
   premiumSlot?: React.ReactNode;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        justifyContent: "space-between",
-        marginBottom: 12,
-      }}
-    >
-      {/* Lado izquierdo: Hamburguesa + marca */}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <button
           aria-label="Abrir menú"
           onClick={onOpenMenu}
           style={{
-            width: 42,
-            height: 42,
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.12)",
-            background: "rgba(255,255,255,.06)",
-            color: "#e5e7eb",
-            display: "grid",
-            placeItems: "center",
-            cursor: "pointer",
+            width: 42, height: 42, borderRadius: 12, border: "1px solid rgba(255,255,255,.12)",
+            background: "rgba(255,255,255,.06)", color: "#e5e7eb", display: "grid", placeItems: "center", cursor: "pointer",
           }}
         >
           <div style={{ display: "grid", gap: 4 }} aria-hidden>
@@ -267,15 +210,9 @@ function Header({
 
         <div
           style={{
-            width: 46,
-            height: 46,
-            borderRadius: 14,
-            display: "grid",
-            placeItems: "center",
-            background: "linear-gradient(135deg,#7c3aed,#5b21b6)",
-            boxShadow: "0 10px 22px rgba(124,58,237,.35)",
-            fontSize: 24,
-            fontWeight: 900,
+            width: 46, height: 46, borderRadius: 14, display: "grid", placeItems: "center",
+            background: "linear-gradient(135deg,#7c3aed,#5b21b6)", boxShadow: "0 10px 22px rgba(124,58,237,.35)",
+            fontSize: 24, fontWeight: 900,
           }}
           aria-hidden
         >
@@ -287,74 +224,21 @@ function Header({
         </div>
       </div>
 
-      {/* Acciones rápidas (ocultas en móvil) */}
       <div className="quick-actions" style={{ display: "flex", gap: 8 }}>
-        <button
-          onClick={onOpenBuilder}
-          title="Generador de selección"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.12)",
-            color: "#d1d5db",
-            background: "rgba(255,255,255,.06)",
-          }}
-        >
+        <button onClick={onOpenBuilder} title="Generador de selección" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
           🎯 Selección
         </button>
-        <button
-          onClick={onOpenHistory}
-          title="Historial de apuestas"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.12)",
-            color: "#d1d5db",
-            background: "rgba(255,255,255,.06)",
-          }}
-        >
+        <button onClick={onOpenHistory} title="Historial de apuestas" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
           📒 Historial
         </button>
-        <button
-          onClick={onOpenParlay}
-          title="Generador de Parley"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.12)",
-            color: "#d1d5db",
-            background: "rgba(255,255,255,.06)",
-          }}
-        >
+        <button onClick={onOpenParlay} title="Generador de Parley" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
           🧮 Parley
         </button>
-        <button
-          onClick={onOpenIABoot}
-          title="IA Boot"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.12)",
-            color: "#d1d5db",
-            background: "rgba(255,255,255,.06)",
-          }}
-        >
+        <button onClick={onOpenIABoot} title="IA Boot" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
           🤖 IA Boot
         </button>
 
-        {/* 👑 Premium: injectado desde App */}
+        {/* 👑 Premium compacto */}
         {premiumSlot}
       </div>
     </div>
@@ -363,27 +247,14 @@ function Header({
 
 /* ===== Editor de cuotas ===== */
 function OddsEditor({
-  odds,
-  setOdds,
-  rawOdds,
-  setRawOdds,
-}: {
-  odds: Odds;
-  setOdds: (o: Odds) => void;
-  rawOdds: RawOdds;
-  setRawOdds: (o: RawOdds) => void;
-}) {
+  odds, setOdds, rawOdds, setRawOdds,
+}: { odds: Odds; setOdds: (o: Odds) => void; rawOdds: RawOdds; setRawOdds: (o: RawOdds) => void; }) {
   const Field = ({ k, labelText, ph }: { k: keyof Odds; labelText: string; ph: string }) => (
     <div>
       <div style={labelCss}>{labelText}</div>
       <input
-        type="text"
-        inputMode="decimal"
-        aria-label={`Cuota ${labelText}`}
-        placeholder={ph}
-        style={inputCss}
-        pattern="^[0-9]+([\\.,][0-9]+)?$"
-        value={rawOdds[k] ?? ""}
+        type="text" inputMode="decimal" aria-label={`Cuota ${labelText}`} placeholder={ph} style={inputCss}
+        pattern="^[0-9]+([\\.,][0-9]+)?$" value={rawOdds[k] ?? ""}
         onChange={(e) => setRawOdds({ ...rawOdds, [k]: e.target.value })}
         onBlur={(e) => {
           const num = toFloat(e.target.value);
@@ -402,14 +273,7 @@ function OddsEditor({
         <div style={{ ...pill }}>👛 Cuotas (opcional)</div>
         <div style={{ fontSize: 12, opacity: 0.75 }}>Sugerencia: ingrésalas ~5 horas antes para mayor precisión.</div>
       </div>
-      <div
-        style={{
-          marginTop: 10,
-          display: "grid",
-          gap: 10,
-          gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))",
-        }}
-      >
+      <div style={{ marginTop: 10, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))" }}>
         <Field k="1" labelText="1 (Local)" ph="2.10" />
         <Field k="X" labelText="X (Empate)" ph="3.30" />
         <Field k="2" labelText="2 (Visitante)" ph="3.40" />
@@ -418,13 +282,7 @@ function OddsEditor({
       </div>
       {anyOdds && (
         <div style={{ marginTop: 10 }}>
-          <button
-            onClick={() => {
-              setOdds({});
-              setRawOdds({});
-            }}
-            style={{ ...pill, cursor: "pointer" }}
-          >
+          <button onClick={() => { setOdds({}); setRawOdds({}); }} style={{ ...pill, cursor: "pointer" }}>
             🧹 Limpiar cuotas
           </button>
         </div>
@@ -471,15 +329,10 @@ export default function App() {
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
 
-  // Clave local (solo almacenamiento/envío header)
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
-
-  // Suscripción verificada por backend
   const [sub, setSub] = useState<SubscriptionState>({ active: false, premium_key: null });
-
   const [introOpen, setIntroOpen] = useState(!localStorage.getItem("fm_intro_seen"));
 
-  // Parley + Historial + Stake + Builder + Menu
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [stakeOpen, setStakeOpen] = useState(false);
@@ -487,21 +340,46 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false);
 
   const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  // abre PremiumButton desde IntroModal
+  /* === Checkout compacto y portal === */
+  const startCheckout = useCallback(
+    async (plan: "weekly" | "monthly" | "annual" = "monthly") => {
+      try {
+        const j = await fetchJSON<{ provider: string; url: string }>(`${API_BASE}/billing/checkout`, {
+          method: "POST",
+          body: JSON.stringify({ plan, method: "card", user_email: null }),
+          premiumKey,
+        });
+        if (j?.url) window.location.href = j.url;
+      } catch (e: any) {
+        alert(e?.message || "No se pudo iniciar el pago.");
+      }
+    },
+    [premiumKey]
+  );
+
+  const openPortal = useCallback(async () => {
+    try {
+      const j = await fetchJSON<{ url: string }>(`${API_BASE}/create-billing-portal`, {
+        method: "POST",
+        body: JSON.stringify({ premium_key: premiumKey }),
+        premiumKey,
+      });
+      if (j?.url) window.location.href = j.url;
+    } catch (e: any) {
+      alert(e?.message || "No se pudo abrir el portal.");
+    }
+  }, [premiumKey]);
+
+  // abre Premium desde Intro (sin modal)
   const goPremium = useCallback(() => {
     setIntroOpen(false);
     localStorage.setItem("fm_intro_seen", "1");
-    document.dispatchEvent(new CustomEvent("open-premium"));
-  }, []);
+    startCheckout("monthly");
+  }, [startCheckout]);
 
-  /* ✅ VALIDAR CLAVE GUARDADA AL ARRANCAR (usando /premium/status) */
+  /* ✅ VALIDAR CLAVE GUARDADA AL ARRANCAR */
   useEffect(() => {
     const k = localStorage.getItem("fm_premium_key") || "";
     setPremiumKey(k);
@@ -513,9 +391,7 @@ export default function App() {
 
     (async () => {
       try {
-        const r = await fetch(`${API_BASE}/premium/status`, {
-          headers: { "X-Premium-Key": k },
-        });
+        const r = await fetch(`${API_BASE}/premium/status`, { headers: { "X-Premium-Key": k } });
         if (!r.ok) throw new Error(await r.text());
         const j = await r.json();
 
@@ -544,15 +420,13 @@ export default function App() {
     })();
   }, [API_BASE, setPremiumKey]);
 
-  /* 🔁 Cuando cambia premiumKey (p. ej. tras canje), refresca estado de suscripción */
+  /* 🔁 Refrescar estado cuando cambia premiumKey */
   useEffect(() => {
     if (!premiumKey) return;
     let cancel = false;
     (async () => {
       try {
-        const r = await fetch(`${API_BASE}/premium/status`, {
-          headers: { "X-Premium-Key": premiumKey },
-        });
+        const r = await fetch(`${API_BASE}/premium/status`, { headers: { "X-Premium-Key": premiumKey } });
         if (!r.ok) return;
         const j = await r.json();
         if (cancel) return;
@@ -567,30 +441,25 @@ export default function App() {
         });
       } catch {}
     })();
-    return () => {
-      cancel = true;
-    };
+    return () => { cancel = true; };
   }, [premiumKey]);
 
   const redeemHandledRef = useRef(false);
-  /** 🔁 Canjeo de sesión de Stripe por query (?success / ?canceled) */
+  /** 🔁 Canjeo de sesión Stripe (?success/&session_id) */
   useEffect(() => {
     const url = new URL(window.location.href);
     const success = url.searchParams.get("success");
     const sessionId = url.searchParams.get("session_id");
     const canceled = url.searchParams.get("canceled");
 
-    // evita dobles ejecuciones
     if (redeemHandledRef.current) return;
 
-    // cancelar: limpiar query y salir
     if (canceled === "true") {
       window.history.replaceState(null, "", window.location.pathname);
       redeemHandledRef.current = true;
       return;
     }
 
-    // procesar solo una vez por session_id
     if (success === "true" && sessionId) {
       const already = sessionStorage.getItem("fm_redeem_sid");
       if (already === sessionId) {
@@ -599,20 +468,16 @@ export default function App() {
         return;
       }
 
-      // limpia la query de inmediato
       window.history.replaceState(null, "", window.location.pathname);
 
       (async () => {
         try {
           type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
-          const j = await fetchJSON<RedeemResp>(
-            `${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`
-          );
+          const j = await fetchJSON<RedeemResp>(`${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`);
           if (j?.premium_key) {
             setPremiumKey(j.premium_key);
             if (j.current_period_end) localStorage.setItem("fm_premium_cpe", String(j.current_period_end));
             sessionStorage.setItem("fm_redeem_sid", sessionId);
-            // No alert aquí; lo mostramos en el efecto de transición a premium.
           } else {
             alert("Pago correcto, pero no se pudo recuperar la clave. Contacta soporte.");
           }
@@ -625,7 +490,7 @@ export default function App() {
     }
   }, [setPremiumKey]);
 
-  /* 🎉 Mostrar “Premium activado” UNA SOLA VEZ cuando sub.active pase a true */
+  /* 🎉 “Premium activado” UNA sola vez */
   const prevActiveRef = useRef<boolean>(false);
   useEffect(() => {
     if (sub.active && !prevActiveRef.current) {
@@ -642,10 +507,7 @@ export default function App() {
     const controller = new AbortController();
     (async () => {
       try {
-        const d = await fetchJSON<ApiLeagues>(`${API_BASE}/leagues`, {
-          signal: controller.signal as any,
-          premiumKey,
-        });
+        const d = await fetchJSON<ApiLeagues>(`${API_BASE}/leagues`, { signal: controller.signal as any, premiumKey });
         if (!mounted.current) return;
         setLeagues(d.leagues ?? []);
       } catch (e) {
@@ -658,22 +520,15 @@ export default function App() {
 
   // Cargar equipos por liga
   useEffect(() => {
-    setHome("");
-    setAway("");
-    setData(null);
-    setErr("");
+    setHome(""); setAway(""); setData(null); setErr("");
     if (!league) return setTeams([]);
 
     const controller = new AbortController();
     (async () => {
       try {
-        const d = await fetchJSON<ApiTeams>(
-          `${API_BASE}/teams?league=${encodeURIComponent(league)}`,
-          {
-            signal: controller.signal as any,
-            premiumKey,
-          }
-        );
+        const d = await fetchJSON<ApiTeams>(`${API_BASE}/teams?league=${encodeURIComponent(league)}`, {
+          signal: controller.signal as any, premiumKey,
+        });
         if (!mounted.current) return;
         setTeams(d.teams ?? []);
       } catch (e) {
@@ -686,14 +541,8 @@ export default function App() {
 
   const canPredict = league && home && away && home !== away;
 
-  const filteredHome = useMemo(
-    () => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())),
-    [teams, home]
-  );
-  const filteredAway = useMemo(
-    () => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())),
-    [teams, away]
-  );
+  const filteredHome = useMemo(() => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())), [teams, home]);
+  const filteredAway = useMemo(() => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())), [teams, away]);
 
   async function onPredict() {
     if (!canPredict || loading) return;
@@ -705,28 +554,20 @@ export default function App() {
       if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
 
       const json = await fetchJSON<PredictResponse>(`${API_BASE}/predict`, {
-        method: "POST",
-        body: JSON.stringify(body),
-        premiumKey,
+        method: "POST", body: JSON.stringify(body), premiumKey,
       });
       if (!mounted.current) return;
       setData(json);
 
-      // Log a historial (best-effort)
+      // Log best-effort
       try {
         const odd = oddFromBestPick(json.best_pick, odds);
         await fetchJSON(`${API_BASE}/history/log`, {
           method: "POST",
           body: JSON.stringify({
-            ts: Math.floor(Date.now() / 1000),
-            league,
-            home,
-            away,
-            market: json.best_pick.market,
-            selection: json.best_pick.selection,
-            prob_pct: json.best_pick.prob_pct,
-            odd,
-            stake: null,
+            ts: Math.floor(Date.now() / 1000), league, home, away,
+            market: json.best_pick.market, selection: json.best_pick.selection,
+            prob_pct: json.best_pick.prob_pct, odd, stake: null,
           }),
           premiumKey,
         });
@@ -738,32 +579,19 @@ export default function App() {
     }
   }
 
-  // Defaults para modal de stake
   const stakeDefaults = useMemo(() => {
     if (!data) return null;
     const prob01 = (data.best_pick?.prob_pct ?? 0) / 100;
     const odd = oddFromBestPick(data.best_pick, odds);
-
     const humanMarket =
-      data.best_pick.market === "1X2"
-        ? "Ganador del partido"
-        : data.best_pick.market === "Over 2.5"
-        ? "Más de 2.5 goles"
-        : data.best_pick.market === "BTTS"
-        ? "Ambos equipos anotan"
-        : data.best_pick.market;
-
+      data.best_pick.market === "1X2" ? "Ganador del partido"
+        : data.best_pick.market === "Over 2.5" ? "Más de 2.5 goles"
+        : data.best_pick.market === "BTTS" ? "Ambos equipos anotan" : data.best_pick.market;
     const humanSelection =
       data.best_pick.market === "1X2"
-        ? data.best_pick.selection === "1"
-          ? "Gana Local"
-          : data.best_pick.selection === "2"
-          ? "Gana Visitante"
-          : "Empate"
+        ? data.best_pick.selection === "1" ? "Gana Local" : data.best_pick.selection === "2" ? "Gana Visitante" : "Empate"
         : data.best_pick.selection;
-
     const matchLabel = `${data.home_team} vs ${data.away_team}`;
-
     return { prob01, odd, humanMarket, humanSelection, matchLabel };
   }, [data, odds]);
 
@@ -796,36 +624,31 @@ export default function App() {
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenIABoot={() => setIaOpen(true)}
           premiumSlot={
-            <PremiumButton
-              apiBase={API_BASE}
-              premiumKey={premiumKey}
-              // Cuando PremiumButton termine un canje válido, actualizamos clave y estado
-              onRedeemDone={(s: any) => {
-                const active = !!(s?.active || s?.status === "active" || s?.status === "trialing");
-                if (s?.premium_key) {
-                  localStorage.setItem("fm_premium_key", s.premium_key);
-                  setPremiumKey(s.premium_key);
-                }
-                setSub({
-                  active,
-                  status: s?.status ?? null,
-                  plan: s?.plan ?? planFromPriceId(s?.price_id),
-                  price_id: s?.price_id ?? null,
-                  current_period_end: s?.current_period_end ?? null,
-                  premium_key: s?.premium_key ?? null,
-                  email: s?.email ?? null,
-                });
-              }}
-            />
+            <div style={{ display: "flex", gap: 8 }}>
+              {isPremiumUI ? (
+                <button
+                  onClick={openPortal}
+                  title="Gestionar suscripción"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(34,197,94,.45)", color: "#d1fae5", background: "rgba(34,197,94,.12)", fontWeight: 800 }}
+                >
+                  👑 Gestionar
+                </button>
+              ) : (
+                <button
+                  onClick={() => startCheckout("monthly")}
+                  title="Activar Premium"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(124,58,237,.5)", color: "white", background: "linear-gradient(135deg,#7c3aed,#5b21b6)", fontWeight: 900 }}
+                >
+                  👑 Premium
+                </button>
+              )}
+            </div>
           }
         />
 
         <IntroModal
           open={!!introOpen}
-          onClose={() => {
-            setIntroOpen(false);
-            localStorage.setItem("fm_intro_seen", "1");
-          }}
+          onClose={() => { setIntroOpen(false); localStorage.setItem("fm_intro_seen", "1"); }}
           onGoPremium={goPremium}
         />
 
@@ -834,7 +657,6 @@ export default function App() {
             <input type="checkbox" checked={expert} onChange={(e) => setExpert(e.target.checked)} />
             &nbsp;Modo experto (ver detalles POISSON/DC)
           </label>
-          {/* Chip de estado simple (la UI detallada la maneja PremiumButton) */}
           <div style={{ ...pill, borderColor: isPremiumUI ? "#22c55e" : "rgba(255,255,255,.1)" }}>
             {isPremiumUI ? `✅ Premium activo${sub.plan ? " · " + sub.plan : ""}` : "🔒 Modo gratis"}
           </div>
@@ -851,51 +673,20 @@ export default function App() {
           <div className="g3" style={{ marginTop: 12 }}>
             <div>
               <div style={labelCss}>Liga</div>
-              <select
-                value={league}
-                onChange={(e) => setLeague(e.target.value)}
-                style={inputCss}
-                aria-label="Selecciona liga"
-              >
+              <select value={league} onChange={(e) => setLeague(e.target.value)} style={inputCss} aria-label="Selecciona liga">
                 <option value="">— Selecciona liga —</option>
-                {leagues.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
+                {leagues.map((l) => (<option key={l} value={l}>{l}</option>))}
               </select>
             </div>
             <div>
               <div style={labelCss}>Equipo local</div>
-              <input
-                placeholder="Escribe para buscar…"
-                value={home}
-                onChange={(e) => setHome(e.target.value)}
-                list="home_list"
-                style={inputCss}
-                aria-label="Equipo local"
-              />
-              <datalist id="home_list">
-                {filteredHome.map((t) => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
+              <input placeholder="Escribe para buscar…" value={home} onChange={(e) => setHome(e.target.value)} list="home_list" style={inputCss} aria-label="Equipo local" />
+              <datalist id="home_list">{filteredHome.map((t) => (<option key={t} value={t} />))}</datalist>
             </div>
             <div>
               <div style={labelCss}>Equipo visitante</div>
-              <input
-                placeholder="Escribe para buscar…"
-                value={away}
-                onChange={(e) => setAway(e.target.value)}
-                list="away_list"
-                style={inputCss}
-                aria-label="Equipo visitante"
-              />
-              <datalist id="away_list">
-                {filteredAway.map((t) => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
+              <input placeholder="Escribe para buscar…" value={away} onChange={(e) => setAway(e.target.value)} list="away_list" style={inputCss} aria-label="Equipo visitante" />
+              <datalist id="away_list">{filteredAway.map((t) => (<option key={t} value={t} />))}</datalist>
             </div>
           </div>
         </div>
@@ -905,17 +696,11 @@ export default function App() {
 
         {/* CTA fijo inferior */}
         <div className="fixedbar" aria-live="polite">
-          <div style={{ fontSize: 12, opacity: 0.8 }}>
-            {canPredict ? "Listo para calcular" : "Selecciona liga y ambos equipos"}
-          </div>
+          <div style={{ fontSize: 12, opacity: 0.8 }}>{canPredict ? "Listo para calcular" : "Selecciona liga y ambos equipos"}</div>
           <button
             onClick={onPredict}
             disabled={!canPredict || loading}
-            style={{
-              ...btnPrimary,
-              opacity: !canPredict || loading ? 0.6 : 1,
-              cursor: !canPredict || loading ? "not-allowed" : "pointer",
-            }}
+            style={{ ...btnPrimary, opacity: !canPredict || loading ? 0.6 : 1, cursor: !canPredict || loading ? "not-allowed" : "pointer" }}
             aria-busy={loading}
           >
             {loading ? "Calculando…" : "Calcular ahora"}
@@ -924,17 +709,7 @@ export default function App() {
 
         {/* Errores */}
         {err && (
-          <div
-            role="alert"
-            style={{
-              background: "rgba(239,68,68,.12)",
-              border: "1px solid rgba(239,68,68,.35)",
-              padding: 12,
-              borderRadius: 12,
-              marginTop: 12,
-              color: "#fecaca",
-            }}
-          >
+          <div role="alert" style={{ background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.35)", padding: 12, borderRadius: 12, marginTop: 12, color: "#fecaca" }}>
             {err}
           </div>
         )}
@@ -947,43 +722,13 @@ export default function App() {
         )}
 
         {/* Drawers */}
-        <NavDrawer
-          open={navOpen}
-          onClose={() => setNavOpen(false)}
-          onOpenParlay={() => setParlayOpen(true)}
-          onOpenBuilder={() => setBuilderOpen(true)}
-          onOpenHistory={() => setHistOpen(true)}
-        />
+        <NavDrawer open={navOpen} onClose={() => setNavOpen(false)} onOpenParlay={() => setParlayOpen(true)} onOpenBuilder={() => setBuilderOpen(true)} onOpenHistory={() => setHistOpen(true)} />
 
-        <ParlayDrawer
-          open={parlayOpen}
-          onClose={() => setParlayOpen(false)}
-          API_BASE={API_BASE}
-          isPremium={isPremiumUI}
-          premiumKey={premiumKey}
-        />
+        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} API_BASE={API_BASE} isPremium={isPremiumUI} premiumKey={premiumKey} />
 
-        <BuilderDrawer
-          open={builderOpen}
-          onClose={() => setBuilderOpen(false)}
-          API_BASE={API_BASE}
-          league={league}
-          home={home}
-          away={away}
-          odds={odds}
-          premiumKey={premiumKey}
-        />
+        <BuilderDrawer open={builderOpen} onClose={() => setBuilderOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
 
-        <IABootDrawer
-          open={iaOpen}
-          onClose={() => setIaOpen(false)}
-          API_BASE={API_BASE}
-          league={league}
-          home={home}
-          away={away}
-          odds={odds}
-          premiumKey={premiumKey}
-        />
+        <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
 
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
 
@@ -996,13 +741,7 @@ export default function App() {
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
               <button
                 onClick={() => setStakeOpen(true)}
-                style={{
-                  ...pill,
-                  cursor: "pointer",
-                  borderColor: "#22c55e",
-                  background: "linear-gradient(135deg,#22c55e55,#16a34a55)",
-                  fontWeight: 900,
-                }}
+                style={{ ...pill, cursor: "pointer", borderColor: "#22c55e", background: "linear-gradient(135deg,#22c55e55,#16a34a55)", fontWeight: 900 }}
                 title="Calcular stake con Kelly"
               >
                 💰 Stake
@@ -1013,11 +752,7 @@ export default function App() {
                   const body: any = { league, home_team: home, away_team: away };
                   if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
                   try {
-                    await fetchJSON(`${API_BASE}/alerts/value-pick`, {
-                      method: "POST",
-                      body: JSON.stringify(body),
-                      premiumKey,
-                    });
+                    await fetchJSON(`${API_BASE}/alerts/value-pick`, { method: "POST", body: JSON.stringify(body), premiumKey });
                     alert("Enviado (si cumple umbrales).");
                   } catch (e: any) {
                     alert(e?.message || "No se pudo enviar la alerta.");
