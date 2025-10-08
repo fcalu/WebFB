@@ -237,16 +237,6 @@ export default function Landing() {
           </Feature>
         </div>
 
-        {/* CTA */}
-        <div style={{ display: "flex", gap: 10, marginTop: 22, flexWrap: "wrap" }}>
-          <button style={pillBtn} onClick={() => nav("/app")}>
-            Entrar
-          </button>
-          <button style={ghostBtn} onClick={() => setPlansOpen(true)}>
-            Ver planes Premium
-          </button>
-        </div>
-
         <div style={{ opacity: 0.6, fontSize: 12, marginTop: 18 }}>
           * Uso educativo/informativo. No constituye asesoría financiera ni garantiza resultados.
         </div>

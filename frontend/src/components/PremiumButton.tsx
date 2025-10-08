@@ -1,317 +1,362 @@
-import { useEffect, useMemo, useState } from "react";
-
-export type PlanKey = "weekly" | "monthly" | "annual";
-const PLAN_LABELS: Record<PlanKey, string> = {
-  weekly: "Semanal",
-  monthly: "Mensual",
-  annual: "Anual",
-};
-
-export type SubscriptionState = {
-  active: boolean;
-  status?: string;
-  current_period_end?: number | null; // epoch seconds
-  premium_key?: string;
-  email?: string | null;
-  plan?: PlanKey | null;
-  price_id?: string | null;
-  interval?: string | null; // "week" | "month" | "year" | ...
-};
+// src/components/PremiumButton.tsx
+import React, { useEffect, useMemo, useState } from "react";
 
 type Props = {
   apiBase: string;
-  premiumKey: string;
-  onRedeemDone?: (state: SubscriptionState) => void;
+  premiumKey?: string | null;
+  onRedeemDone?: (status: any) => void;
+  showLabel?: string; // texto del botón; default "Premium"
 };
 
-function fmtExpiry(ts?: number | null) {
-  if (!ts) return "";
-  try {
-    return new Date(ts * 1000).toLocaleDateString();
-  } catch {
-    return "";
-  }
+/** Etiquetas de precio para mostrar en el modal (solo UI). 
+ *  Configúralas en Vercel si quieres números reales visibles:
+ *  VITE_PRICE_WEEKLY_LABEL / VITE_PRICE_MONTHLY_LABEL / VITE_PRICE_YEARLY_LABEL
+ */
+const LABEL_WEEKLY =
+  (import.meta as any).env?.VITE_PRICE_WEEKLY_LABEL ?? "Semanal";
+const LABEL_MONTHLY =
+  (import.meta as any).env?.VITE_PRICE_MONTHLY_LABEL ?? "Mensual";
+const LABEL_YEARLY =
+  (import.meta as any).env?.VITE_PRICE_YEARLY_LABEL ?? "Anual";
+
+/** Mini helper fetch JSON */
+async function postJSON<T>(url: string, body: any): Promise<T> {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+  return (await r.json()) as T;
 }
 
-async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
-  const text = await r.text();
-  if (!r.ok) throw new Error(text || `HTTP ${r.status}`);
-  return text ? (JSON.parse(text) as T) : ({} as T);
-}
+export default function PremiumButton({
+  apiBase,
+  premiumKey,
+  onRedeemDone,
+  showLabel = "Premium",
+}: Props) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [status, setStatus] = useState<{
+    active: boolean;
+    status?: string | null;
+    current_period_end?: number | null;
+    email?: string | null;
+    plan?: string | null;
+  }>({ active: false });
 
-function planFromInterval(interval?: string | null): PlanKey | null {
-  if (!interval) return null;
-  if (interval === "week") return "weekly";
-  if (interval === "month") return "monthly";
-  if (interval === "year") return "annual";
-  return null;
-}
-
-// si tu backend devuelve price_id podemos mapearlo aquí
-const PRICE_TO_PLAN: Record<string, PlanKey> = {
-  // "price_123weekly": "weekly",
-  // "price_456monthly": "monthly",
-  // "price_789annual": "annual",
-};
-
-function planFromPriceId(price_id?: string | null): PlanKey | null {
-  if (!price_id) return null;
-  return PRICE_TO_PLAN[price_id] ?? null;
-}
-
-export default function PremiumButton({ apiBase, premiumKey, onRedeemDone }: Props) {
-  const [sub, setSub] = useState<SubscriptionState | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string>("");
-
-  const isActive = useMemo(
-    () => Boolean(sub?.active) || Boolean(premiumKey?.trim()),
-    [sub?.active, premiumKey]
-  );
-
-  // ————————————————————————————————————————————————
-  // 1) Canjear al volver de Stripe (?success=true&session_id=...)
-  // ————————————————————————————————————————————————
+  // Abrir desde otros sitios (IntroModal dispara "open-premium")
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const success = url.searchParams.get("success");
-    const sessionId = url.searchParams.get("session_id");
-    const canceled = url.searchParams.get("canceled");
+    const fn = () => setOpen(true);
+    document.addEventListener("open-premium", fn as any);
+    return () => document.removeEventListener("open-premium", fn as any);
+  }, []);
 
-    if (!(success === "true" && sessionId)) return;
-
+  // Traer estado verificado (opcional, para mostrar “activo”)
+  useEffect(() => {
+    let abort = false;
     (async () => {
+      if (!premiumKey) {
+        setStatus({ active: false });
+        return;
+      }
       try {
-        setLoading(true);
-        setErr("");
-
-        type RedeemResp = {
-          premium_key?: string;
-          status?: string;
-          current_period_end?: number;
-          email?: string | null;
-          active?: boolean;
-          interval?: string | null;     // si tu backend lo expone
-          price_id?: string | null;     // si tu backend lo expone
-          plan?: PlanKey | null;        // si tu backend lo expone
-        };
-
-        const j = await fetchJSON<RedeemResp>(
-          `${apiBase}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`
-        );
-
-        // Recuperar intención del plan por si el backend no devuelve plan/interval
-        const lastIntent = (localStorage.getItem("fm_last_plan_intent") || "") as PlanKey | "";
-
-        const inferredPlan: PlanKey | null =
-          j?.plan ??
-          planFromInterval(j?.interval) ??
-          planFromPriceId(j?.price_id ?? null) ??
-          (lastIntent ? lastIntent : null);
-
-        const next: SubscriptionState = {
-          active: j?.active ?? (j?.status === "active" || j?.status === "trialing"),
-          status: j?.status,
-          current_period_end: j?.current_period_end ?? null,
-          premium_key: j?.premium_key,
-          email: j?.email ?? null,
-          plan: inferredPlan ?? null,
-          price_id: j?.price_id ?? null,
-          interval: j?.interval ?? null,
-        };
-
-        if (next.premium_key) {
-          localStorage.setItem("fm_premium_key", next.premium_key);
-        }
-        localStorage.removeItem("fm_last_plan_intent");
-
-        setSub(next);
-        onRedeemDone?.(next);
-
-        alert("¡Premium activado!");
-      } catch (e: any) {
-        console.error(e);
-        const msg =
-          e?.message?.includes("Failed to fetch")
-            ? "No pude conectar con el backend para canjear la sesión (revisa API_BASE y CORS)."
-            : e?.message || "No se pudo canjear la sesión de Stripe.";
-        setErr(msg);
-      } finally {
-        setLoading(false);
-        // limpia los query params
-        window.history.replaceState(null, "", window.location.pathname);
+        const r = await fetch(`${apiBase}/premium/status`, {
+          headers: { "X-Premium-Key": premiumKey },
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const j = await r.json();
+        if (!abort) setStatus(j);
+        onRedeemDone?.(j);
+      } catch {
+        if (!abort) setStatus({ active: false });
       }
     })();
-  }, [apiBase, onRedeemDone]);
+    return () => {
+      abort = true;
+    };
+  }, [apiBase, premiumKey]);
 
-  // ————————————————————————————————————————————————
-  // 2) Iniciar Checkout
-  // ————————————————————————————————————————————————
-  async function startCheckout(plan: PlanKey = "monthly") {
+  const isActive = !!status.active;
+  const expiresText = useMemo(() => {
+    if (!status?.current_period_end) return "";
     try {
-      setLoading(true);
-      setErr("");
+      const d = new Date(status.current_period_end * 1000);
+      return ` (vence ${d.toLocaleDateString()})`;
+    } catch {
+      return "";
+    }
+  }, [status?.current_period_end]);
 
-      // guarda intención para mostrar el plan correcto al volver
-      localStorage.setItem("fm_last_plan_intent", plan);
-
-      const payload = { plan, method: "card", user_email: "" };
-      const r = await fetch(`${apiBase}/billing/checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.detail || "No se pudo crear la sesión de pago.");
-      if (!j?.url) throw new Error("Respuesta inesperada: falta { url }");
-
-      window.location.assign(j.url);
+  async function startCheckout(plan: "weekly" | "monthly" | "annual") {
+    try {
+      setBusy(plan);
+      // Tu backend /billing/checkout crea la sesión y devuelve { provider, url }
+      const j = await postJSON<{ provider: string; url: string }>(
+        `${apiBase}/billing/checkout`,
+        { plan, method: "card" }
+      );
+      if (j?.url) {
+        // Redirige a Stripe
+        window.location.href = j.url;
+      } else {
+        alert("No se pudo iniciar el checkout.");
+      }
     } catch (e: any) {
-      const msg =
-        e?.message?.includes("Failed to fetch")
-          ? "No pude conectar con el backend (revisa VITE_API_BASE_URL y CORS)."
-          : e?.message || "Error iniciando checkout.";
-      setErr(msg);
-    } finally {
-      setLoading(false);
+      alert(e?.message || "Error iniciando checkout.");
+      setBusy(null);
     }
   }
 
-  // ————————————————————————————————————————————————
-  // 3) Portal de facturación (Gestionar)
-  // ————————————————————————————————————————————————
-  async function openPortal() {
+  async function openBillingPortal() {
+    if (!premiumKey) return alert("No hay clave premium en este dispositivo.");
     try {
-      setLoading(true);
-      setErr("");
-      const key = sub?.premium_key || premiumKey;
-      if (!key) throw new Error("No hay premium_key. Activa Premium primero.");
-
-      const r = await fetch(`${apiBase}/create-billing-portal`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // algunos backends esperan header:
-          "X-Premium-Key": key,
-        },
-        // otros esperan en el body:
-        body: JSON.stringify({ premium_key: key }),
+      setBusy("portal");
+      const j = await postJSON<{ url: string }>(`${apiBase}/create-billing-portal`, {
+        premium_key: premiumKey,
       });
-
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.detail || "No se pudo abrir el portal de facturación.");
-      if (!j?.url) throw new Error("Respuesta inesperada: falta { url }");
-
-      window.location.assign(j.url);
+      if (j?.url) window.location.href = j.url;
+      else alert("No se pudo abrir el portal de facturación.");
     } catch (e: any) {
-      const msg =
-        e?.message?.includes("Failed to fetch")
-          ? "No pude conectar con el backend (URL/CORS del endpoint /create-billing-portal)."
-          : e?.message || "Error abriendo el portal.";
-      setErr(msg);
+      alert(e?.message || "No pude conectar con el backend (URL/CORS del endpoint /create-billing-portal).");
     } finally {
-      setLoading(false);
+      setBusy(null);
     }
   }
-
-  const planLabel = sub?.plan ? PLAN_LABELS[sub.plan] : undefined;
 
   return (
-    <div style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-      {err && (
+    <>
+      {/* Botón en el header de la app */}
+      <button
+        onClick={() => setOpen(true)}
+        style={{
+          padding: "12px 18px",
+          borderRadius: 16,
+          border: "1px solid rgba(255,255,255,.12)",
+          background: isActive
+            ? "linear-gradient(135deg,#22c55e,#16a34a)"
+            : "linear-gradient(135deg,#8b5cf6,#6d28d9)",
+          color: "white",
+          fontWeight: 900,
+          cursor: "pointer",
+          minWidth: 130,
+        }}
+        title={isActive ? "Premium activo" : "Hazte Premium"}
+      >
+        {isActive ? `Premium activo${expiresText}` : `👑 ${showLabel}`}
+      </button>
+
+      {/* Modal de planes */}
+      {open && (
         <div
+          role="dialog"
+          aria-modal="true"
           style={{
-            padding: "6px 10px",
-            borderRadius: 999,
-            border: "1px solid rgba(239,68,68,.35)",
-            background: "rgba(239,68,68,.12)",
-            color: "#fecaca",
-            fontSize: 12,
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            display: "grid",
+            placeItems: "center",
+            background: "rgba(0,0,0,.55)",
+            padding: 16,
           }}
+          onClick={() => setOpen(false)}
         >
-          {err}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(920px, 96vw)",
+              background:
+                "linear-gradient(180deg, rgba(15,23,42,1) 0%, rgba(11,16,32,1) 100%)",
+              border: "1px solid rgba(255,255,255,.12)",
+              borderRadius: 18,
+              padding: 18,
+              color: "#e5e7eb",
+              boxShadow: "0 20px 70px rgba(0,0,0,.45)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 10,
+              }}
+            >
+              <div style={{ fontSize: 22, fontWeight: 900 }}>
+                Planes Premium
+              </div>
+              <button
+                onClick={() => setOpen(false)}
+                style={{
+                  background: "rgba(255,255,255,.06)",
+                  border: "1px solid rgba(255,255,255,.12)",
+                  color: "#e5e7eb",
+                  borderRadius: 10,
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                }}
+              >
+                Cerrar ✕
+              </button>
+            </div>
+
+            {/* Copy/beneficios */}
+            <div
+              style={{
+                marginBottom: 14,
+                background: "rgba(124,58,237,.12)",
+                border: "1px solid rgba(124,58,237,.35)",
+                borderRadius: 12,
+                padding: 12,
+                fontSize: 14,
+              }}
+            >
+              Desbloquea módulos Pro:
+              <b> Generador de Selección</b>, <b>Parlay inteligente</b> y
+              <b> IA Boot</b>, además de <b>soporte prioritario</b> y mejoras
+              de precisión (blend con cuotas). Cancela cuando quieras.
+            </div>
+
+            {/* Tarjetas */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                gap: 12,
+              }}
+            >
+              <PlanCard
+                label="Semanal"
+                priceLabel={LABEL_WEEKLY}
+                bullets={[
+                  "Ideal para probar funciones Pro.",
+                  "Incluye todos los módulos.",
+                  "Renovable semanalmente.",
+                ]}
+                action={() => startCheckout("weekly")}
+                busy={busy === "weekly"}
+              />
+              <PlanCard
+                label="Mensual"
+                priceLabel={LABEL_MONTHLY}
+                bullets={[
+                  "Uso continuo y soporte prioritario.",
+                  "Mejor relación funciones/precio.",
+                  "Renovable mensualmente.",
+                ]}
+                action={() => startCheckout("monthly")}
+                busy={busy === "monthly"}
+              />
+              <PlanCard
+                label="Anual"
+                priceLabel={LABEL_YEARLY}
+                bullets={[
+                  "Mejor precio por mes.",
+                  "Acceso estable para toda la temporada.",
+                  "Incluye todo lo de Mensual.",
+                ]}
+                action={() => startCheckout("annual")}
+                busy={busy === "annual"}
+              />
+            </div>
+
+            {/* Pie del modal */}
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginTop: 14,
+                fontSize: 12,
+                opacity: 0.8,
+              }}
+            >
+              <div>
+                * Uso educativo/informativo. No constituye asesoría financiera
+                ni garantiza resultados.
+              </div>
+
+              {isActive && (
+                <button
+                  onClick={openBillingPortal}
+                  style={{
+                    background: "rgba(255,255,255,.06)",
+                    border: "1px solid rgba(255,255,255,.12)",
+                    color: "#e5e7eb",
+                    borderRadius: 10,
+                    padding: "8px 12px",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                  disabled={busy === "portal"}
+                  title="Gestiona tu suscripción"
+                >
+                  {busy === "portal" ? "Abriendo…" : "Gestionar suscripción"}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
+    </>
+  );
+}
 
-      {!isActive ? (
-        <>
-          <button
-            onClick={() => startCheckout("monthly")}
-            disabled={loading}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,.12)",
-              color: "#fff",
-              background: "linear-gradient(135deg, #7c3aed, #5b21b6)",
-              fontWeight: 900,
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
-            title="Activar Premium Mensual"
-          >
-            {loading ? "Procesando…" : "👑 Premium mensual"}
-          </button>
-
-          <button
-            onClick={() => startCheckout("annual")}
-            disabled={loading}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,.12)",
-              color: "#d1d5db",
-              background: "rgba(255,255,255,.06)",
-              fontWeight: 800,
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
-            title="Activar Premium Anual"
-          >
-            {loading ? "Procesando…" : "Anual (-20%)"}
-          </button>
-        </>
-      ) : (
-        <>
-          <span
-            style={{
-              padding: "10px 16px",
-              borderRadius: 16,
-              background: "linear-gradient(135deg,#14532d,#052e16)",
-              border: "1px solid rgba(34,197,94,.35)",
-              color: "#bbf7d0",
-              fontWeight: 900,
-              whiteSpace: "nowrap",
-            }}
-            title={
-              sub?.current_period_end
-                ? `Vence: ${fmtExpiry(sub.current_period_end)}`
-                : undefined
-            }
-          >
-            ✅ Premium activo
-            {planLabel ? ` — ${planLabel}` : ""}
-            {sub?.current_period_end ? ` (vence ${fmtExpiry(sub.current_period_end)})` : ""}
-          </span>
-
-          <button
-            onClick={openPortal}
-            disabled={loading}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,.12)",
-              color: "#d1d5db",
-              background: "rgba(255,255,255,.06)",
-              fontWeight: 800,
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
-            title="Administrar método de pago / cancelar"
-          >
-            Gestionar
-          </button>
-        </>
-      )}
+function PlanCard({
+  label,
+  priceLabel,
+  bullets,
+  action,
+  busy,
+}: {
+  label: string;
+  priceLabel: string;
+  bullets: string[];
+  action: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,.12)",
+        background: "rgba(255,255,255,.04)",
+        borderRadius: 16,
+        padding: 16,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        minHeight: 210,
+      }}
+    >
+      <div style={{ fontSize: 18, fontWeight: 900 }}>{label}</div>
+      <div style={{ opacity: 0.9 }}>{priceLabel}</div>
+      <ul style={{ margin: 0, paddingInlineStart: 18, lineHeight: 1.5 }}>
+        {bullets.map((b, i) => (
+          <li key={i} style={{ opacity: 0.9 }}>
+            {b}
+          </li>
+        ))}
+      </ul>
+      <button
+        onClick={action}
+        disabled={busy}
+        style={{
+          marginTop: "auto",
+          padding: "12px 14px",
+          borderRadius: 12,
+          border: "none",
+          fontWeight: 900,
+          cursor: busy ? "not-allowed" : "pointer",
+          background: "linear-gradient(135deg,#8b5cf6,#6d28d9)",
+          color: "white",
+        }}
+        title="Ir a Stripe"
+      >
+        {busy ? "Abriendo…" : "Empezar"}
+      </button>
     </div>
   );
 }
