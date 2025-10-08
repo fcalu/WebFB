@@ -1689,6 +1689,45 @@ def iaboot_predict(inp: PredictIn, request: Request):
 def iaboot_suggest(inp: PredictIn, request: Request):
     return iaboot_predict(inp, request)
 
+
+# ===== Estado Premium (para mostrar en la UI) =====
+class PremiumStatusOut(BaseModel):
+    active: bool
+    plan: Optional[str] = None
+    current_period_end: Optional[int] = None
+    email: Optional[str] = None
+    status: Optional[str] = None
+
+def _is_active_record(rec: dict) -> bool:
+    if not rec: 
+        return False
+    st = (rec.get("status") or "").lower()
+    now = int(datetime.now(tz=timezone.utc).timestamp())
+    cpe = int(rec.get("current_period_end") or 0)
+    if st in ("active", "trialing"):
+        return (cpe == 0) or (now <= cpe)
+    return False
+
+@app.get("/premium/status", response_model=PremiumStatusOut)
+def premium_status(
+    premium_key: Optional[str] = None,
+    request: Request = None,
+    premium_key_hdr: Optional[str] = Header(default=None, alias="X-Premium-Key"),
+):
+    key = premium_key or premium_key_hdr or (request.headers.get("X-Premium-Key") if request else None)
+    if not key:
+        return PremiumStatusOut(active=False)
+    rec = premium_find_by_key(key)
+    if not rec:
+        return PremiumStatusOut(active=False)
+    return PremiumStatusOut(
+        active=_is_active_record(rec),
+        plan=rec.get("plan"),
+        current_period_end=int(rec.get("current_period_end") or 0),
+        email=rec.get("email") or None,
+        status=rec.get("status"),
+    )
+
 # =========================
 # RUTAS BÁSICAS PARA FRONT
 # =========================

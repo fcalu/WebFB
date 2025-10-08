@@ -453,7 +453,8 @@ export default function App() {
   const [iaOpen, setIaOpen] = useState(false);
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
   const [introOpen, setIntroOpen] = useState(!localStorage.getItem("fm_intro_seen"));
-  
+  const [premiumStatus, setPremiumStatus] = useState<{active:boolean, current_period_end?: number}>({active:false});
+
   // Parley + Historial + Stake + Builder + Menu
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
@@ -505,7 +506,7 @@ const goPremium = useCallback(() => {
         const j = await fetchJSON<RedeemResp>(`${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`);
         if (j?.premium_key) {
           setPremiumKey(j.premium_key);
-          alert("¡Premium activado! Tu clave quedó guardada.");
+          if (j.current_period_end) localStorage.setItem("fm_premium_cpe", String(j.current_period_end));
         } else {
           alert("Pago correcto, pero no se pudo recuperar la clave. Contacta soporte.");
         }
@@ -536,6 +537,14 @@ const goPremium = useCallback(() => {
     })();
     return () => controller.abort();
   }, [premiumKey]);
+
+  useEffect(() => {
+  if (!premiumKey) { setPremiumStatus({active:false}); return; }
+  fetch(`${API_BASE}/premium/status`, { headers: { "X-Premium-Key": premiumKey } })
+    .then(r => r.json())
+    .then((j) => setPremiumStatus(j))
+    .catch(()=> setPremiumStatus({active:false}));
+}, [premiumKey]);
 
   // Cargar equipos por liga
   useEffect(() => {
@@ -665,7 +674,13 @@ const goPremium = useCallback(() => {
           onOpenParlay={() => setParlayOpen(true)}
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenIABoot={() => setIaOpen(true)}
-          premiumSlot={<PremiumButton apiBase={API_BASE} premiumKey={premiumKey} />}
+          premiumSlot={
+          <PremiumButton
+            apiBase={API_BASE}
+            premiumKey={premiumKey}
+            onRedeemDone={(s)=> setPremiumStatus(s)}
+          />
+          }
           
         />
         <IntroModal
@@ -795,12 +810,35 @@ const goPremium = useCallback(() => {
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenHistory={() => setHistOpen(true)}
         />
+        <ParlayDrawer
+          open={parlayOpen}
+          onClose={() => setParlayOpen(false)}
+          API_BASE={API_BASE}
+          isPremium={premiumStatus.active}
+          premiumKey={premiumKey}
+        />
 
-        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} API_BASE={API_BASE} isPremium={!!premiumKey} premiumKey={premiumKey} />
+        <BuilderDrawer
+          open={builderOpen}
+          onClose={() => setBuilderOpen(false)}
+          API_BASE={API_BASE}
+          league={league}
+          home={home}
+          away={away}
+          odds={odds}
+          premiumKey={premiumKey}
+        />
 
-        <BuilderDrawer open={builderOpen} onClose={() => setBuilderOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
-
-        <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
+        <IABootDrawer
+          open={iaOpen}
+          onClose={() => setIaOpen(false)}
+          API_BASE={API_BASE}
+          league={league}
+          home={home}
+          away={away}
+          odds={odds}
+          premiumKey={premiumKey}
+        />
 
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
 
