@@ -501,7 +501,7 @@ export default function App() {
     document.dispatchEvent(new CustomEvent("open-premium"));
   }, []);
 
-  /* ✅ VALIDAR CLAVE GUARDADA AL ARRANCAR */
+  /* ✅ VALIDAR CLAVE GUARDADA AL ARRANCAR (usando /premium/status) */
   useEffect(() => {
     const k = localStorage.getItem("fm_premium_key") || "";
     setPremiumKey(k);
@@ -513,7 +513,7 @@ export default function App() {
 
     (async () => {
       try {
-        const r = await fetch(`${API_BASE}/stripe/status`, {
+        const r = await fetch(`${API_BASE}/premium/status`, {
           headers: { "X-Premium-Key": k },
         });
         if (!r.ok) throw new Error(await r.text());
@@ -544,58 +544,98 @@ export default function App() {
     })();
   }, [API_BASE, setPremiumKey]);
 
-  const redeemHandledRef = useRef(false);
-  /** 🔁 Canjeo de sesión de Stripe por query (?success/ ?canceled) */
+  /* 🔁 Cuando cambia premiumKey (p. ej. tras canje), refresca estado de suscripción */
   useEffect(() => {
-  const url = new URL(window.location.href);
-  const success   = url.searchParams.get("success");
-  const sessionId = url.searchParams.get("session_id");
-  const canceled  = url.searchParams.get("canceled");
+    if (!premiumKey) return;
+    let cancel = false;
+    (async () => {
+      try {
+        const r = await fetch(`${API_BASE}/premium/status`, {
+          headers: { "X-Premium-Key": premiumKey },
+        });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (cancel) return;
+        setSub({
+          active: !!(j.active || j.status === "active" || j.status === "trialing"),
+          status: j?.status ?? null,
+          plan: j?.plan ?? planFromPriceId(j?.price_id),
+          price_id: j?.price_id ?? null,
+          current_period_end: j?.current_period_end ?? null,
+          premium_key: premiumKey,
+          email: j?.email ?? null,
+        });
+      } catch {}
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [premiumKey]);
 
-  // evita dobles ejecuciones (StrictMode / rehidratos)
-  if (redeemHandledRef.current) return;
+  const redeemHandledRef = useRef(false);
+  /** 🔁 Canjeo de sesión de Stripe por query (?success / ?canceled) */
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const success = url.searchParams.get("success");
+    const sessionId = url.searchParams.get("session_id");
+    const canceled = url.searchParams.get("canceled");
 
-  // cancelar: limpiar query y salir
-  if (canceled === "true") {
-    window.history.replaceState(null, "", window.location.pathname);
-    redeemHandledRef.current = true;
-    return;
-  }
+    // evita dobles ejecuciones
+    if (redeemHandledRef.current) return;
 
-  // procesar solo una vez por session_id
-  if (success === "true" && sessionId) {
-    const already = sessionStorage.getItem("fm_redeem_sid");
-    if (already === sessionId) {
+    // cancelar: limpiar query y salir
+    if (canceled === "true") {
       window.history.replaceState(null, "", window.location.pathname);
       redeemHandledRef.current = true;
       return;
     }
 
-    // limpia la query lo antes posible para evitar recargas repetidas
-    window.history.replaceState(null, "", window.location.pathname);
-
-    (async () => {
-      try {
-        type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
-        const j = await fetchJSON<RedeemResp>(
-          `${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`
-        );
-        if (j?.premium_key) {
-          setPremiumKey(j.premium_key);
-          if (j.current_period_end) localStorage.setItem("fm_premium_cpe", String(j.current_period_end));
-          alert("¡Premium activado!");           // <-- único lugar donde se muestra
-          sessionStorage.setItem("fm_redeem_sid", sessionId);
-        } else {
-          alert("Pago correcto, pero no se pudo recuperar la clave. Contacta soporte.");
-        }
-      } catch (e: any) {
-        alert(e?.message || "No se pudo canjear la sesión de Stripe.");
-      } finally {
+    // procesar solo una vez por session_id
+    if (success === "true" && sessionId) {
+      const already = sessionStorage.getItem("fm_redeem_sid");
+      if (already === sessionId) {
+        window.history.replaceState(null, "", window.location.pathname);
         redeemHandledRef.current = true;
+        return;
       }
-    })();
-  }
-}, [setPremiumKey]);
+
+      // limpia la query de inmediato
+      window.history.replaceState(null, "", window.location.pathname);
+
+      (async () => {
+        try {
+          type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
+          const j = await fetchJSON<RedeemResp>(
+            `${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`
+          );
+          if (j?.premium_key) {
+            setPremiumKey(j.premium_key);
+            if (j.current_period_end) localStorage.setItem("fm_premium_cpe", String(j.current_period_end));
+            sessionStorage.setItem("fm_redeem_sid", sessionId);
+            // No alert aquí; lo mostramos en el efecto de transición a premium.
+          } else {
+            alert("Pago correcto, pero no se pudo recuperar la clave. Contacta soporte.");
+          }
+        } catch (e: any) {
+          alert(e?.message || "No se pudo canjear la sesión de Stripe.");
+        } finally {
+          redeemHandledRef.current = true;
+        }
+      })();
+    }
+  }, [setPremiumKey]);
+
+  /* 🎉 Mostrar “Premium activado” UNA SOLA VEZ cuando sub.active pase a true */
+  const prevActiveRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (sub.active && !prevActiveRef.current) {
+      prevActiveRef.current = true;
+      if (!sessionStorage.getItem("fm_premium_welcome_shown")) {
+        sessionStorage.setItem("fm_premium_welcome_shown", "1");
+        alert("¡Premium activado!");
+      }
+    }
+  }, [sub.active]);
 
   // Cargar ligas
   useEffect(() => {
