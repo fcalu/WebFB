@@ -1,17 +1,12 @@
-// src/components/PremiumButton.tsx
 import React, { useEffect, useMemo, useState } from "react";
 
 type Props = {
   apiBase: string;
   premiumKey?: string | null;
   onRedeemDone?: (status: any) => void;
-  showLabel?: string; // texto del botón; default "Premium"
+  showLabel?: string;
 };
 
-/** Etiquetas de precio para mostrar en el modal (solo UI). 
- *  Configúralas en Vercel si quieres números reales visibles:
- *  VITE_PRICE_WEEKLY_LABEL / VITE_PRICE_MONTHLY_LABEL / VITE_PRICE_YEARLY_LABEL
- */
 const LABEL_WEEKLY =
   (import.meta as any).env?.VITE_PRICE_WEEKLY_LABEL ?? "Semanal";
 const LABEL_MONTHLY =
@@ -19,7 +14,6 @@ const LABEL_MONTHLY =
 const LABEL_YEARLY =
   (import.meta as any).env?.VITE_PRICE_YEARLY_LABEL ?? "Anual";
 
-/** Mini helper fetch JSON */
 async function postJSON<T>(url: string, body: any): Promise<T> {
   const r = await fetch(url, {
     method: "POST",
@@ -46,14 +40,14 @@ export default function PremiumButton({
     plan?: string | null;
   }>({ active: false });
 
-  // Abrir desde otros sitios (IntroModal dispara "open-premium")
+  // Permite abrir el modal desde otros sitios: document.dispatchEvent(new CustomEvent("open-premium"))
   useEffect(() => {
     const fn = () => setOpen(true);
     document.addEventListener("open-premium", fn as any);
     return () => document.removeEventListener("open-premium", fn as any);
   }, []);
 
-  // Traer estado verificado (opcional, para mostrar “activo”)
+  // Estado verificado (opcional)
   useEffect(() => {
     let abort = false;
     (async () => {
@@ -92,14 +86,12 @@ export default function PremiumButton({
   async function startCheckout(plan: "weekly" | "monthly" | "annual") {
     try {
       setBusy(plan);
-      // Tu backend /billing/checkout crea la sesión y devuelve { provider, url }
       const j = await postJSON<{ provider: string; url: string }>(
         `${apiBase}/billing/checkout`,
         { plan, method: "card" }
       );
       if (j?.url) {
-        // Redirige a Stripe
-        window.location.href = j.url;
+        window.location.href = j.url; // → Stripe
       } else {
         alert("No se pudo iniciar el checkout.");
       }
@@ -119,7 +111,7 @@ export default function PremiumButton({
       if (j?.url) window.location.href = j.url;
       else alert("No se pudo abrir el portal de facturación.");
     } catch (e: any) {
-      alert(e?.message || "No pude conectar con el backend (URL/CORS del endpoint /create-billing-portal).");
+      alert(e?.message || "No pude conectar con /create-billing-portal.");
     } finally {
       setBusy(null);
     }
@@ -127,7 +119,7 @@ export default function PremiumButton({
 
   return (
     <>
-      {/* Botón en el header de la app */}
+      {/* Botón del header */}
       <button
         onClick={() => setOpen(true)}
         style={{
@@ -147,7 +139,7 @@ export default function PremiumButton({
         {isActive ? `Premium activo${expiresText}` : `👑 ${showLabel}`}
       </button>
 
-      {/* Modal de planes */}
+      {/* Modal */}
       {open && (
         <div
           role="dialog"
@@ -184,9 +176,7 @@ export default function PremiumButton({
                 marginBottom: 10,
               }}
             >
-              <div style={{ fontSize: 22, fontWeight: 900 }}>
-                Planes Premium
-              </div>
+              <div style={{ fontSize: 22, fontWeight: 900 }}>Planes Premium</div>
               <button
                 onClick={() => setOpen(false)}
                 style={{
@@ -202,7 +192,6 @@ export default function PremiumButton({
               </button>
             </div>
 
-            {/* Copy/beneficios */}
             <div
               style={{
                 marginBottom: 14,
@@ -213,13 +202,11 @@ export default function PremiumButton({
                 fontSize: 14,
               }}
             >
-              Desbloquea módulos Pro:
-              <b> Generador de Selección</b>, <b>Parlay inteligente</b> y
+              Desbloquea <b>Generador de Selección</b>, <b>Parlay inteligente</b> e
               <b> IA Boot</b>, además de <b>soporte prioritario</b> y mejoras
               de precisión (blend con cuotas). Cancela cuando quieras.
             </div>
 
-            {/* Tarjetas */}
             <div
               style={{
                 display: "grid",
@@ -262,7 +249,6 @@ export default function PremiumButton({
               />
             </div>
 
-            {/* Pie del modal */}
             <div
               style={{
                 display: "flex",

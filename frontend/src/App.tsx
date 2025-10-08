@@ -71,6 +71,10 @@ function planFromPriceId(price?: string | null) {
   return null;
 }
 
+const LABEL_WEEKLY  = (import.meta as any).env?.VITE_PRICE_WEEKLY_LABEL  ?? "Semanal";
+const LABEL_MONTHLY = (import.meta as any).env?.VITE_PRICE_MONTHLY_LABEL ?? "Mensual";
+const LABEL_YEARLY  = (import.meta as any).env?.VITE_PRICE_YEARLY_LABEL  ?? "Anual";
+
 /* ===== Config (entorno) ===== */
 const API_BASE: string =
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
@@ -313,6 +317,125 @@ function SkeletonCard() {
   );
 }
 
+/* ====== Popup de Planes ====== */
+type PlanKey = "weekly" | "monthly" | "annual";
+
+function PlanCard({
+  label, priceLabel, bullets, onClick, disabled
+}: {
+  label: string; priceLabel: string; bullets: string[];
+  onClick: () => void; disabled?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,.12)",
+        background: "rgba(255,255,255,.04)",
+        borderRadius: 16, padding: 16,
+        display: "flex", flexDirection: "column", gap: 10, minHeight: 210
+      }}
+    >
+      <div style={{ fontSize: 18, fontWeight: 900 }}>{label}</div>
+      <div style={{ opacity: 0.9 }}>{priceLabel}</div>
+      <ul style={{ margin: 0, paddingInlineStart: 18, lineHeight: 1.5 }}>
+        {bullets.map((b, i) => <li key={i} style={{ opacity: 0.9 }}>{b}</li>)}
+      </ul>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        style={{
+          marginTop: "auto", padding: "12px 14px",
+          borderRadius: 12, border: "none", fontWeight: 900,
+          cursor: disabled ? "not-allowed" : "pointer",
+          background: "linear-gradient(135deg,#8b5cf6,#6d28d9)", color: "white"
+        }}
+        title="Ir a Stripe"
+      >
+        {disabled ? "Abriendo…" : "Empezar"}
+      </button>
+    </div>
+  );
+}
+
+function PlansModal({
+  open, onClose, onChoose
+}: {
+  open: boolean; onClose: () => void;
+  onChoose: (plan: PlanKey) => void;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      role="dialog" aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 80,
+        display: "grid", placeItems: "center",
+        background: "rgba(0,0,0,.55)", padding: 16
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(920px, 96vw)",
+          background: "linear-gradient(180deg,#0f172a 0%, #0b1020 100%)",
+          border: "1px solid rgba(255,255,255,.12)",
+          borderRadius: 18, padding: 18, color: "#e5e7eb",
+          boxShadow: "0 20px 70px rgba(0,0,0,.45)"
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontSize: 22, fontWeight: 900 }}>Planes Premium</div>
+          <button
+            onClick={onClose}
+            style={{
+              background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.12)",
+              color: "#e5e7eb", borderRadius: 10, padding: "8px 12px", cursor: "pointer"
+            }}
+          >
+            Cerrar ✕
+          </button>
+        </div>
+
+        <div
+          style={{
+            marginBottom: 14,
+            background: "rgba(124,58,237,.12)",
+            border: "1px solid rgba(124,58,237,.35)",
+            borderRadius: 12, padding: 12, fontSize: 14
+          }}
+        >
+          Desbloquea <b>Generador de Selección</b>, <b>Parlay inteligente</b> e
+          <b> IA Boot</b>, además de <b>blend con cuotas</b> y <b>soporte prioritario</b>.
+          Cancela cuando quieras.
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 12 }}>
+          <PlanCard
+            label="Semanal" priceLabel={LABEL_WEEKLY}
+            bullets={["Ideal para probar funciones Pro.", "Incluye todos los módulos.", "Renovable semanalmente."]}
+            onClick={() => onChoose("weekly")}
+          />
+          <PlanCard
+            label="Mensual" priceLabel={LABEL_MONTHLY}
+            bullets={["Uso continuo y soporte prioritario.", "Mejor relación funciones/precio.", "Renovable mensualmente."]}
+            onClick={() => onChoose("monthly")}
+          />
+          <PlanCard
+            label="Anual" priceLabel={LABEL_YEARLY}
+            bullets={["Mejor precio por mes.", "Acceso estable toda la temporada.", "Incluye todo lo de Mensual."]}
+            onClick={() => onChoose("annual")}
+          />
+        </div>
+
+        <div style={{ marginTop: 14, fontSize: 12, opacity: 0.8 }}>
+          * Uso educativo/informativo. No constituye asesoría financiera ni garantiza resultados.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- APP PRINCIPAL ---
 export default function App() {
   // ⚙️ Estado
@@ -328,6 +451,7 @@ export default function App() {
   const [data, setData] = useState<PredictResponse | null>(null);
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
+  const [plansOpen, setPlansOpen] = useState(false);
 
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
   const [sub, setSub] = useState<SubscriptionState>({ active: false, premium_key: null });
@@ -344,7 +468,7 @@ export default function App() {
 
   /* === Checkout compacto y portal === */
   const startCheckout = useCallback(
-    async (plan: "weekly" | "monthly" | "annual" = "monthly") => {
+    async (plan: PlanKey = "monthly") => {
       try {
         const j = await fetchJSON<{ provider: string; url: string }>(`${API_BASE}/billing/checkout`, {
           method: "POST",
@@ -629,15 +753,27 @@ export default function App() {
                 <button
                   onClick={openPortal}
                   title="Gestionar suscripción"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(34,197,94,.45)", color: "#d1fae5", background: "rgba(34,197,94,.12)", fontWeight: 800 }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 8,
+                    padding: "10px 14px", borderRadius: 12,
+                    border: "1px solid rgba(34,197,94,.45)",
+                    color: "#d1fae5", background: "rgba(34,197,94,.12)", fontWeight: 800
+                  }}
                 >
                   👑 Gestionar
                 </button>
               ) : (
                 <button
-                  onClick={() => startCheckout("monthly")}
+                  onClick={() => setPlansOpen(true)}
                   title="Activar Premium"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(124,58,237,.5)", color: "white", background: "linear-gradient(135deg,#7c3aed,#5b21b6)", fontWeight: 900 }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 8,
+                    padding: "10px 14px", borderRadius: 12,
+                    border: "1px solid rgba(124,58,237,.5)",
+                    color: "white",
+                    background: "linear-gradient(135deg,#7c3aed,#5b21b6)",
+                    fontWeight: 900
+                  }}
                 >
                   👑 Premium
                 </button>
@@ -784,6 +920,16 @@ export default function App() {
             defaultOdd={stakeDefaults.odd}
           />
         )}
+
+        {/* Modal de Planes */}
+        <PlansModal
+          open={plansOpen}
+          onClose={() => setPlansOpen(false)}
+          onChoose={(plan) => {
+            setPlansOpen(false);
+            startCheckout(plan);
+          }}
+        />
       </div>
     </div>
   );
