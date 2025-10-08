@@ -56,8 +56,9 @@ type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES
 /* ===== Config (entorno) ===== */
 const API_BASE: string =
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
-  (import.meta as any).env?.VITE_API_BASE ||           // <-- usa VITE_API_BASE
+  (import.meta as any).env?.VITE_API_BASE_URL ||
   "http://localhost:8000";
+
 
 /* ===== Helpers ===== */
 const toFloat = (v: unknown) => {
