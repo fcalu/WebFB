@@ -53,12 +53,31 @@ type PredictResponse = {
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
+/* ===== Suscripción (UI verificada) ===== */
+type SubscriptionState = {
+  active: boolean;
+  status?: string | null;
+  plan?: string | null;
+  price_id?: string | null;
+  current_period_end?: number | null;
+  premium_key?: string | null;
+  email?: string | null;
+};
+
+function planFromPriceId(price?: string | null) {
+  if (!price) return null;
+  const p = String(price).toLowerCase();
+  if (p.includes("week") || p.includes("semana")) return "Semanal";
+  if (p.includes("month") || p.includes("mensual")) return "Mensual";
+  if (p.includes("year") || p.includes("anual")) return "Anual";
+  return null;
+}
+
 /* ===== Config (entorno) ===== */
 const API_BASE: string =
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
   (import.meta as any).env?.VITE_API_BASE_URL ||
   "http://localhost:8000";
-
 
 /* ===== Helpers ===== */
 const toFloat = (v: unknown) => {
@@ -451,9 +470,14 @@ export default function App() {
   const [data, setData] = useState<PredictResponse | null>(null);
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
+
+  // Clave local (solo almacenamiento/envío header)
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
+
+  // Suscripción verificada por backend
+  const [sub, setSub] = useState<SubscriptionState>({ active: false, premium_key: null });
+
   const [introOpen, setIntroOpen] = useState(!localStorage.getItem("fm_intro_seen"));
-  const [premiumStatus, setPremiumStatus] = useState<{active:boolean, current_period_end?: number}>({active:false});
 
   // Parley + Historial + Stake + Builder + Menu
   const [parlayOpen, setParlayOpen] = useState(false);
@@ -462,7 +486,6 @@ export default function App() {
   const [builderOpen, setBuilderOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
 
-  
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -470,64 +493,110 @@ export default function App() {
       mounted.current = false;
     };
   }, []);
-  
-// abre el PremiumButton desde IntroModal
-const goPremium = useCallback(() => {
-  setIntroOpen(false);
-  localStorage.setItem("fm_intro_seen", "1");
-  // Disparamos un evento global que escuchará PremiumButton
-  document.dispatchEvent(new CustomEvent("open-premium"));
-}, []);
 
+  // abre PremiumButton desde IntroModal
+  const goPremium = useCallback(() => {
+    setIntroOpen(false);
+    localStorage.setItem("fm_intro_seen", "1");
+    document.dispatchEvent(new CustomEvent("open-premium"));
+  }, []);
 
-  // Guardar/Revocar clave premium
-  const handleKeySubmit = useCallback(
-    (newKey: string) => {
-      const trimmedKey = newKey.trim();
-      setPremiumKey(trimmedKey);
-      if (!trimmedKey) {
-        alert("Acceso Premium revocado. Se ha restablecido el acceso Freemium.");
-      }
-    },
-    [setPremiumKey]
-  );
-
-  /** 🔁 Canjeo de sesión de Stripe y guardado de premium_key */
+  /* ✅ VALIDAR CLAVE GUARDADA AL ARRANCAR */
   useEffect(() => {
-  const url = new URL(window.location.href);
-  const success = url.searchParams.get("success");
-  const sessionId = url.searchParams.get("session_id");
-  const canceled = url.searchParams.get("canceled");
+    const k = localStorage.getItem("fm_premium_key") || "";
+    setPremiumKey(k);
 
-  (async () => {
-    try {
-      if (success === "true" && sessionId) {
-        type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
-        const j = await fetchJSON<RedeemResp>(`${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`);
-        if (j?.premium_key) {
-          setPremiumKey(j.premium_key);
-          if (j.current_period_end) localStorage.setItem("fm_premium_cpe", String(j.current_period_end));
-        } else {
-          alert("Pago correcto, pero no se pudo recuperar la clave. Contacta soporte.");
-        }
-      } else if (canceled === "true") {
-        alert("El pago fue cancelado. Puedes intentarlo de nuevo.");
-      }
-    } catch (e: any) {
-      alert(e?.message || "No se pudo canjear la sesión de Stripe.");
-    } finally {
-      // limpia la query: /app
-      window.history.replaceState(null, "", window.location.pathname);
+    if (!k) {
+      setSub({ active: false, premium_key: null });
+      return;
     }
-  })();
-}, [setPremiumKey]);
+
+    (async () => {
+      try {
+        const r = await fetch(`${API_BASE}/stripe/status`, {
+          headers: { "X-Premium-Key": k },
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const j = await r.json();
+
+        const active = !!(j.active || j.status === "active" || j.status === "trialing");
+        const next: SubscriptionState = {
+          active,
+          status: j?.status ?? null,
+          plan: j?.plan ?? planFromPriceId(j?.price_id),
+          price_id: j?.price_id ?? null,
+          current_period_end: j?.current_period_end ?? null,
+          premium_key: k,
+          email: j?.email ?? null,
+        };
+
+        setSub(next);
+
+        if (!active) {
+          localStorage.removeItem("fm_premium_key");
+          setPremiumKey("");
+        }
+      } catch {
+        localStorage.removeItem("fm_premium_key");
+        setPremiumKey("");
+        setSub({ active: false, premium_key: null });
+      }
+    })();
+  }, [API_BASE, setPremiumKey]);
+
+  /** 🔁 Canjeo de sesión de Stripe por query (?success/ ?canceled) */
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const success = url.searchParams.get("success");
+    const sessionId = url.searchParams.get("session_id");
+    const canceled = url.searchParams.get("canceled");
+
+    (async () => {
+      try {
+        if (success === "true" && sessionId) {
+          const j = await fetchJSON<any>(
+            `${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`
+          );
+
+          const next: SubscriptionState = {
+            active: !!(j?.active || j?.status === "active" || j?.status === "trialing"),
+            status: j?.status ?? null,
+            plan: j?.plan ?? planFromPriceId(j?.price_id),
+            price_id: j?.price_id ?? null,
+            current_period_end: j?.current_period_end ?? null,
+            premium_key: j?.premium_key ?? null,
+            email: j?.email ?? null,
+          };
+
+          if (next.premium_key) {
+            localStorage.setItem("fm_premium_key", next.premium_key);
+            setPremiumKey(next.premium_key);
+          }
+          setSub(next);
+
+          if (!next.active) alert("Pago correcto, pero la suscripción no quedó activa.");
+          else alert("¡Premium activado!");
+        } else if (canceled === "true") {
+          alert("El pago fue cancelado.");
+        }
+      } catch (e: any) {
+        alert(e?.message || "No se pudo canjear la sesión de Stripe.");
+      } finally {
+        // limpia la query: /app
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    })();
+  }, [setPremiumKey]);
 
   // Cargar ligas
   useEffect(() => {
     const controller = new AbortController();
     (async () => {
       try {
-        const d = await fetchJSON<ApiLeagues>(`${API_BASE}/leagues`, { signal: controller.signal as any, premiumKey });
+        const d = await fetchJSON<ApiLeagues>(`${API_BASE}/leagues`, {
+          signal: controller.signal as any,
+          premiumKey,
+        });
         if (!mounted.current) return;
         setLeagues(d.leagues ?? []);
       } catch (e) {
@@ -537,14 +606,6 @@ const goPremium = useCallback(() => {
     })();
     return () => controller.abort();
   }, [premiumKey]);
-
-  useEffect(() => {
-  if (!premiumKey) { setPremiumStatus({active:false}); return; }
-  fetch(`${API_BASE}/premium/status`, { headers: { "X-Premium-Key": premiumKey } })
-    .then(r => r.json())
-    .then((j) => setPremiumStatus(j))
-    .catch(()=> setPremiumStatus({active:false}));
-}, [premiumKey]);
 
   // Cargar equipos por liga
   useEffect(() => {
@@ -557,10 +618,13 @@ const goPremium = useCallback(() => {
     const controller = new AbortController();
     (async () => {
       try {
-        const d = await fetchJSON<ApiTeams>(`${API_BASE}/teams?league=${encodeURIComponent(league)}`, {
-          signal: controller.signal as any,
-          premiumKey,
-        });
+        const d = await fetchJSON<ApiTeams>(
+          `${API_BASE}/teams?league=${encodeURIComponent(league)}`,
+          {
+            signal: controller.signal as any,
+            premiumKey,
+          }
+        );
         if (!mounted.current) return;
         setTeams(d.teams ?? []);
       } catch (e) {
@@ -573,8 +637,14 @@ const goPremium = useCallback(() => {
 
   const canPredict = league && home && away && home !== away;
 
-  const filteredHome = useMemo(() => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())), [teams, home]);
-  const filteredAway = useMemo(() => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())), [teams, away]);
+  const filteredHome = useMemo(
+    () => teams.filter((t) => t.toLowerCase().includes(home.toLowerCase())),
+    [teams, home]
+  );
+  const filteredAway = useMemo(
+    () => teams.filter((t) => t.toLowerCase().includes(away.toLowerCase())),
+    [teams, away]
+  );
 
   async function onPredict() {
     if (!canPredict || loading) return;
@@ -648,6 +718,8 @@ const goPremium = useCallback(() => {
     return { prob01, odd, humanMarket, humanSelection, matchLabel };
   }, [data, odds]);
 
+  const isPremiumUI = sub.active === true;
+
   return (
     <div style={page}>
       <style>{`
@@ -675,29 +747,48 @@ const goPremium = useCallback(() => {
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenIABoot={() => setIaOpen(true)}
           premiumSlot={
-          <PremiumButton
-            apiBase={API_BASE}
-            premiumKey={premiumKey}
-            onRedeemDone={(s: any) => {
-              if (s?.premium_key) setPremiumKey(s.premium_key);
-            }}
-          />
+            <PremiumButton
+              apiBase={API_BASE}
+              premiumKey={premiumKey}
+              // Cuando PremiumButton termine un canje válido, actualizamos clave y estado
+              onRedeemDone={(s: any) => {
+                const active = !!(s?.active || s?.status === "active" || s?.status === "trialing");
+                if (s?.premium_key) {
+                  localStorage.setItem("fm_premium_key", s.premium_key);
+                  setPremiumKey(s.premium_key);
+                }
+                setSub({
+                  active,
+                  status: s?.status ?? null,
+                  plan: s?.plan ?? planFromPriceId(s?.price_id),
+                  price_id: s?.price_id ?? null,
+                  current_period_end: s?.current_period_end ?? null,
+                  premium_key: s?.premium_key ?? null,
+                  email: s?.email ?? null,
+                });
+              }}
+            />
           }
-          
         />
+
         <IntroModal
-        open={!!introOpen}
-        onClose={() => {
-          setIntroOpen(false);
-          localStorage.setItem("fm_intro_seen", "1");
-        }}
-        onGoPremium={goPremium}
-      />
+          open={!!introOpen}
+          onClose={() => {
+            setIntroOpen(false);
+            localStorage.setItem("fm_intro_seen", "1");
+          }}
+          onGoPremium={goPremium}
+        />
+
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
           <label style={{ fontSize: 12, opacity: 0.8 }}>
             <input type="checkbox" checked={expert} onChange={(e) => setExpert(e.target.checked)} />
             &nbsp;Modo experto (ver detalles POISSON/DC)
           </label>
+          {/* Chip de estado simple (la UI detallada la maneja PremiumButton) */}
+          <div style={{ ...pill, borderColor: isPremiumUI ? "#22c55e" : "rgba(255,255,255,.1)" }}>
+            {isPremiumUI ? `✅ Premium activo${sub.plan ? " · " + sub.plan : ""}` : "🔒 Modo gratis"}
+          </div>
         </div>
 
         {/* Paso 1: Selección */}
@@ -765,7 +856,9 @@ const goPremium = useCallback(() => {
 
         {/* CTA fijo inferior */}
         <div className="fixedbar" aria-live="polite">
-          <div style={{ fontSize: 12, opacity: 0.8 }}>{canPredict ? "Listo para calcular" : "Selecciona liga y ambos equipos"}</div>
+          <div style={{ fontSize: 12, opacity: 0.8 }}>
+            {canPredict ? "Listo para calcular" : "Selecciona liga y ambos equipos"}
+          </div>
           <button
             onClick={onPredict}
             disabled={!canPredict || loading}
@@ -812,11 +905,12 @@ const goPremium = useCallback(() => {
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenHistory={() => setHistOpen(true)}
         />
+
         <ParlayDrawer
           open={parlayOpen}
           onClose={() => setParlayOpen(false)}
           API_BASE={API_BASE}
-          isPremium={premiumStatus.active}
+          isPremium={isPremiumUI}
           premiumKey={premiumKey}
         />
 
