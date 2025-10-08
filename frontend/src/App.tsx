@@ -678,7 +678,9 @@ const goPremium = useCallback(() => {
           <PremiumButton
             apiBase={API_BASE}
             premiumKey={premiumKey}
-            onRedeemDone={(s)=> setPremiumStatus(s)}
+            onRedeemDone={(s: any) => {
+              if (s?.premium_key) setPremiumKey(s.premium_key);
+            }}
           />
           }
           
