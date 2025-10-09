@@ -71,9 +71,9 @@ function planFromPriceId(price?: string | null) {
   return null;
 }
 
-const LABEL_WEEKLY  = (import.meta as any).env?.VITE_PRICE_WEEKLY_LABEL  ?? "Semanal";
-const LABEL_MONTHLY = (import.meta as any).env?.VITE_PRICE_MONTHLY_LABEL ?? "Mensual";
-const LABEL_YEARLY  = (import.meta as any).env?.VITE_PRICE_YEARLY_LABEL  ?? "Anual";
+const LABEL_WEEKLY  = (import.meta as any).env?.VITE_PRICE_WEEKLY_LABEL  ?? "Semanal   $70.00";
+const LABEL_MONTHLY = (import.meta as any).env?.VITE_PRICE_MONTHLY_LABEL ?? "Mensual   $130.00";
+const LABEL_YEARLY  = (import.meta as any).env?.VITE_PRICE_YEARLY_LABEL  ?? "Anual     $1199.00";
 
 /* ===== Config (entorno) ===== */
 const API_BASE: string =
