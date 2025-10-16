@@ -238,7 +238,7 @@ function useLocalStorageState<T>(key: string, initial: T) {
 
 async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: string } = {}): Promise<T> {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 20_000);
+  const id = setTimeout(() => controller.abort(), 45_000);
   try {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
