@@ -18,6 +18,9 @@ import requests  # <-- PayPal por HTTP
 # === OpenAI / retry ===
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
+from fastapi import FastAPI, HTTPException, Query
+from top_matches import top_matches_payload
+
 
 # === sklearn (opcional) ===
 try:
@@ -1009,6 +1012,13 @@ async def stripe_webhook(request: Request):
 
     return {"ok": True}
 
+
+@app.get("/top-matches")
+def top_matches(date: str | None = Query(default=None)):
+    try:
+        return top_matches_payload(date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/stripe/redeem")
 def stripe_redeem(session_id: str):
