@@ -1,122 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import IntroModal from "./components/IntroModal";
 
-// ===============================================
-// ===== IN-FILE COMPONENT DEFINITIONS =====
-// ===============================================
-// To resolve build errors, all components are defined within this single file.
-
-const IntroModal = ({ open, onClose, onGoPremium }: { open: boolean, onClose: () => void, onGoPremium: () => void }) => {
-  if (!open) return null;
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.7)', display: 'grid', placeItems: 'center' }} onClick={onClose}>
-      <div style={{ background: '#0b1020', padding: 20, borderRadius: 16, border: '1px solid #334155', maxWidth: 500, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-        <h2 style={{ marginTop: 0 }}>Bienvenido a FootyMines</h2>
-        <p>Usa estadísticas avanzadas para obtener predicciones de fútbol claras y accionables.</p>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-          <button onClick={onClose} style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #475569', background: '#1e293b', color: 'white', cursor: 'pointer' }}>Explorar Gratis</button>
-          <button onClick={onGoPremium} style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: 'linear-gradient(135deg, #7c3aed, #5b21b6)', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>🚀 Ir a Premium</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const BestPickPro = ({ data, odds }: { data: PredictResponse, odds: Odds }) => (
-  <div style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 16, padding: 14 }}>
-    <h3 style={{ marginTop: 0 }}>Mejor Selección (PRO)</h3>
-    <p><b>Partido:</b> {data.home_team} vs {data.away_team}</p>
-    <p><b>Mercado:</b> {data.best_pick.market}</p>
-    <p><b>Selección:</b> {data.best_pick.selection}</p>
-    <p><b>Probabilidad:</b> {data.best_pick.prob_pct}%</p>
-  </div>
-);
-
-const ErrorBoundary = ({ children }: { children: React.ReactNode }) => <>{children}</>;
-
-const ParlayDrawer = ({ open, onClose, isPremium }: { open: boolean, onClose: () => void, isPremium: boolean }) => {
-  if (!open) return null;
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
-      <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'min(400px, 90vw)', background: '#0f172a', padding: 16, borderLeft: '1px solid #334155' }} onClick={e => e.stopPropagation()}>
-        <h3>Generador de Parley</h3>
-        {!isPremium && <p style={{background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.35)', padding: 12, borderRadius: 12, color: '#fecaca'}}>Esta es una función Premium.</p>}
-        <p>Aquí puedes construir tus parlays...</p>
-      </div>
-    </div>
-  );
-};
-
-const BuilderDrawer = ({ open, onClose, home, away }: { open: boolean, onClose: () => void, home: string, away: string }) => {
-  if (!open) return null;
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
-      <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'min(400px, 90vw)', background: '#0f172a', padding: 16, borderLeft: '1px solid #334155' }} onClick={e => e.stopPropagation()}>
-        <h3>Generador de Selección</h3>
-        <p>Creando una selección para {home || '...'} vs {away || '...'}...</p>
-      </div>
-    </div>
-  );
-};
-
-const NavDrawer = ({ open, onClose, onOpenParlay, onOpenBuilder, onOpenHistory, onOpenTopMatches }: { open: boolean, onClose: () => void, onOpenParlay: () => void, onOpenBuilder: () => void, onOpenHistory: () => void, onOpenTopMatches: () => void }) => {
-    if (!open) return null;
-    const buttonStyle: React.CSSProperties = {
-        display: 'block', width: '100%', padding: '15px', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: 'white', textAlign: 'left', fontSize: 16, cursor: 'pointer'
-    };
-    return (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
-            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 'min(300px, 80vw)', background: '#0f172a', padding: 16, borderRight: '1px solid #334155' }} onClick={e => e.stopPropagation()}>
-                <h3 style={{marginTop: 0}}>Menú</h3>
-                <div style={{display: 'flex', flexDirection: 'column', gap: 10}}>
-                    <button style={buttonStyle} onClick={() => { onOpenTopMatches(); onClose(); }}>📅 Partidos del Día</button>
-                    <button style={buttonStyle} onClick={() => { onOpenBuilder(); onClose(); }}>🎯 Generador de Selección</button>
-                    <button style={buttonStyle} onClick={() => { onOpenParlay(); onClose(); }}>🧮 Parley Inteligente</button>
-                    <button style={buttonStyle} onClick={() => { onOpenHistory(); onClose(); }}>📒 Historial</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const IABootDrawer = ({ open, onClose }: { open: boolean, onClose: () => void }) => {
-  if (!open) return null;
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
-      <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'min(400px, 90vw)', background: '#0f172a', padding: 16, borderLeft: '1px solid #334155' }} onClick={e => e.stopPropagation()}>
-        <h3>🤖 IA Boot</h3>
-        <p>Análisis profundo del partido con IA.</p>
-      </div>
-    </div>
-  );
-};
-
-const InstallBanner = () => null;
-
-const StakeModal = ({ open, onClose, matchLabel, market, selection, defaultProb01, defaultOdd }: { open: boolean, onClose: () => void, matchLabel: string, market: string, selection: string, defaultProb01: number | undefined, defaultOdd: number | undefined }) => {
-  if (!open) return null;
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.7)', display: 'grid', placeItems: 'center' }} onClick={onClose}>
-      <div style={{ background: '#0b1020', padding: 20, borderRadius: 16, border: '1px solid #334155', maxWidth: 500 }} onClick={e => e.stopPropagation()}>
-        <h3 style={{marginTop: 0}}>Calcular Stake (Kelly)</h3>
-        <p><b>Partido:</b> {matchLabel}</p>
-        <p><b>Selección:</b> {market} - {selection}</p>
-      </div>
-    </div>
-  );
-};
-
-const BetHistoryDrawer = ({ open, onClose }: { open: boolean, onClose: () => void }) => {
-  if (!open) return null;
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
-      <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'min(400px, 90vw)', background: '#0f172a', padding: 16, borderLeft: '1px solid #334155' }} onClick={e => e.stopPropagation()}>
-        <h3>📒 Historial de Apuestas</h3>
-        <p>Tus predicciones guardadas aparecerán aquí.</p>
-      </div>
-    </div>
-  );
-};
-
+// ✅ Componentes reales
+import BestPickPro from "./components/BestPickPro";
+import ErrorBoundary from "./components/ErrorBoundary";
+import ParlayDrawer from "./components/ParlayDrawer";
+import BuilderDrawer from "./components/BuilderDrawer";
+import NavDrawer from "./components/NavDrawer";
+import IABootDrawer from "./components/IABootDrawer";
+import InstallBanner from "./components/InstallBanner";
+import StakeModal from "./components/StakeModal";
+import BetHistoryDrawer from "./components/BetHistoryDrawer";
 
 /* ===== Tipos ===== */
 type ApiLeagues = { leagues: string[] };
@@ -155,25 +49,6 @@ type PredictResponse = {
   debug?: Record<string, unknown>;
 };
 
-type TopMatch = {
-  home: string;
-  away: string;
-  competition: string;
-  country: string;
-  kickoff_local: string;
-  kickoff_utc: string;
-  tv_mexico?: string;
-  importance_score?: number;
-  rationale?: string;
-  sources: string[];
-};
-
-type TopMatchesResponse = {
-  date: string;
-  timezone: string;
-  matches: TopMatch[];
-};
-
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
@@ -196,17 +71,15 @@ function planFromPriceId(price?: string | null) {
   return null;
 }
 
-const LABEL_WEEKLY  = "Semanal   $70.00";
-const LABEL_MONTHLY = "Mensual   $130.00";
-const LABEL_YEARLY  = "Anual     $1199.00";
+const LABEL_WEEKLY  = (import.meta as any).env?.VITE_PRICE_WEEKLY_LABEL  ?? "Semanal   $70.00";
+const LABEL_MONTHLY = (import.meta as any).env?.VITE_PRICE_MONTHLY_LABEL ?? "Mensual   $130.00";
+const LABEL_YEARLY  = (import.meta as any).env?.VITE_PRICE_YEARLY_LABEL  ?? "Anual     $1199.00";
 
 /* ===== Config (entorno) ===== */
-// Este bloque es crucial para la conexión. En Vercel, debes configurar una
-// variable de entorno llamada `VITE_API_BASE_URL` con la URL de tu backend en Render.
-const API_BASE: string = (import.meta as any).env?.VITE_API_BASE_URL ||
+const API_BASE: string =
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
+  (import.meta as any).env?.VITE_API_BASE_URL ||
   "http://localhost:8000";
-
 
 /* ===== Helpers ===== */
 const toFloat = (v: unknown) => {
@@ -216,6 +89,12 @@ const toFloat = (v: unknown) => {
   return Number.isFinite(x) ? x : undefined;
 };
 
+const pct = (n?: number) => (n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`);
+function classNames(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
+/** Guarda estado en localStorage con SSR-safe. */
 function useLocalStorageState<T>(key: string, initial: T) {
   const [val, setVal] = useState<T>(() => {
     try {
@@ -234,15 +113,16 @@ function useLocalStorageState<T>(key: string, initial: T) {
   return [val, setVal] as const;
 }
 
+/** Fetch JSON tipado con AbortController. Adjunta Premium-Key si existe. */
 async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: string } = {}): Promise<T> {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 45_000);
+  const id = setTimeout(() => controller.abort(), 20_000);
   try {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
       ...(opts.headers || {}),
     };
-    if (opts.premiumKey) (headers as Record<string, string>)["X-Premium-Key"] = opts.premiumKey;
+    if ((opts as any).premiumKey) (headers as Record<string, string>)["X-Premium-Key"] = (opts as any).premiumKey;
 
     const res = await fetch(url, { ...opts, headers, signal: controller.signal });
     if (!res.ok) {
@@ -255,6 +135,7 @@ async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: stri
   }
 }
 
+/** Mapea best_pick -> odd ingresada por usuario. */
 function oddFromBestPick(best: PredictResponse["best_pick"], odds: Odds): number | undefined {
   const market = best.market;
   const sel = best.selection;
@@ -330,6 +211,7 @@ function Header({
             <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
           </div>
         </button>
+
         <div
           style={{
             width: 46, height: 46, borderRadius: 14, display: "grid", placeItems: "center",
@@ -345,11 +227,22 @@ function Header({
           <div style={{ opacity: 0.8, fontSize: 13 }}>Predicción clara para usuarios finales</div>
         </div>
       </div>
+
       <div className="quick-actions" style={{ display: "flex", gap: 8 }}>
-        <button onClick={onOpenBuilder} title="Generador de selección" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>🎯 Selección</button>
-        <button onClick={onOpenHistory} title="Historial de apuestas" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>📒 Historial</button>
-        <button onClick={onOpenParlay} title="Generador de Parley" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>🧮 Parley</button>
-        <button onClick={onOpenIABoot} title="IA Boot" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>🤖 IA Boot</button>
+        <button onClick={onOpenBuilder} title="Generador de selección" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
+          🎯 Selección
+        </button>
+        <button onClick={onOpenHistory} title="Historial de apuestas" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
+          📒 Historial
+        </button>
+        <button onClick={onOpenParlay} title="Generador de Parley" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
+          🧮 Parley
+        </button>
+        <button onClick={onOpenIABoot} title="IA Boot" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
+          🤖 IA Boot
+        </button>
+
+        {/* 👑 Premium compacto */}
         {premiumSlot}
       </div>
     </div>
@@ -380,7 +273,7 @@ function OddsEditor({
 
   return (
     <div style={{ ...panel, marginTop: 10 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{ ...pill }}>👛 Cuotas (opcional)</div>
         <div style={{ fontSize: 12, opacity: 0.75 }}>Sugerencia: ingrésalas ~5 horas antes para mayor precisión.</div>
       </div>
@@ -412,11 +305,14 @@ function SkeletonCard() {
     borderRadius: 8,
   } as React.CSSProperties;
   return (
-    <div style={{ ...panel, marginTop: 12 }} role="status" aria-live="polite" aria-busy>
+    <div style={{ ...panel }} role="status" aria-live="polite" aria-busy>
       <style>{`@keyframes shimmer{0%{background-position:-200px 0}100%{background-position:400px 0}}`}</style>
       <div style={{ ...sk, width: "50%", marginBottom: 8 }} />
       <div style={{ ...sk, width: "80%", height: 26, marginBottom: 8 }} />
-      <div style={{ ...sk, width: "60%" }} />
+      <div style={{ ...sk, width: "60%", marginBottom: 8 }} />
+      <div style={{ width: "100%", marginBottom: 6 }} />
+      <div style={{ width: "90%", marginBottom: 6 }} />
+      <div style={{ width: "70%" }} />
     </div>
   );
 }
@@ -451,8 +347,7 @@ function PlanCard({
           marginTop: "auto", padding: "12px 14px",
           borderRadius: 12, border: "none", fontWeight: 900,
           cursor: disabled ? "not-allowed" : "pointer",
-          background: "linear-gradient(135deg,#8b5cf6,#6d28d9)", color: "white",
-          opacity: disabled ? 0.6 : 1,
+          background: "linear-gradient(135deg,#8b5cf6,#6d28d9)", color: "white"
         }}
         title="Ir a Stripe"
       >
@@ -468,18 +363,6 @@ function PlansModal({
   open: boolean; onClose: () => void;
   onChoose: (plan: PlanKey) => void;
 }) {
-    const [isProcessing, setIsProcessing] = useState(false);
-
-    const handleChoose = (plan: PlanKey) => {
-        setIsProcessing(true);
-        onChoose(plan);
-        setTimeout(() => {
-            if (document.visibilityState === 'visible') {
-                setIsProcessing(false);
-            }
-        }, 5000); 
-    };
-
   if (!open) return null;
   return (
     <div
@@ -513,6 +396,7 @@ function PlansModal({
             Cerrar ✕
           </button>
         </div>
+
         <div
           style={{
             marginBottom: 14,
@@ -525,26 +409,25 @@ function PlansModal({
           <b> IA Boot</b>, además de <b>blend con cuotas</b> y <b>soporte prioritario</b>.
           Cancela cuando quieras.
         </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 12 }}>
           <PlanCard
             label="Semanal" priceLabel={LABEL_WEEKLY}
             bullets={["Ideal para probar funciones Pro.", "Incluye todos los módulos.", "Renovable semanalmente."]}
-            onClick={() => handleChoose("weekly")}
-            disabled={isProcessing}
+            onClick={() => onChoose("weekly")}
           />
           <PlanCard
             label="Mensual" priceLabel={LABEL_MONTHLY}
             bullets={["Uso continuo y soporte prioritario.", "Mejor relación funciones/precio.", "Renovable mensualmente."]}
-            onClick={() => handleChoose("monthly")}
-            disabled={isProcessing}
+            onClick={() => onChoose("monthly")}
           />
           <PlanCard
             label="Anual" priceLabel={LABEL_YEARLY}
             bullets={["Mejor precio por mes.", "Acceso estable toda la temporada.", "Incluye todo lo de Mensual."]}
-            onClick={() => handleChoose("annual")}
-            disabled={isProcessing}
+            onClick={() => onChoose("annual")}
           />
         </div>
+
         <div style={{ marginTop: 14, fontSize: 12, opacity: 0.8 }}>
           * Uso educativo/informativo. No constituye asesoría financiera ni garantiza resultados.
         </div>
@@ -553,97 +436,9 @@ function PlansModal({
   );
 }
 
-// ===============================================
-// ===== NUEVO COMPONENTE: TOP MATCHES DRAWER =====
-// ===============================================
-function TopMatchesDrawer({ open, onClose }: { open: boolean, onClose: () => void }) {
-  const [data, setData] = useState<TopMatchesResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [date, setDate] = useState(() => new Date(Date.now() + 24 * 3600 * 1000).toISOString().split('T')[0]);
-
-  useEffect(() => {
-    if (!open) return;
-    let isCancelled = false;
-    async function fetchData() {
-      setLoading(true);
-      setError('');
-      try {
-        const result = await fetchJSON<TopMatchesResponse>(`${API_BASE}/top-matches?date=${date}`);
-        if (!isCancelled) setData(result);
-      } catch (e: any) {
-        if (!isCancelled) {
-          setError(e.message || "No se pudieron cargar los partidos.");
-          setData(null);
-        }
-      } finally {
-        if (!isCancelled) setLoading(false);
-      }
-    }
-    fetchData();
-    return () => { isCancelled = true; };
-  }, [open, date]);
-
-  if (!open) return null;
-
-  return (
-    <div
-      role="dialog" aria-modal="true" onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 60,
-        background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(5px)',
-        display: 'flex', justifyContent: 'flex-end',
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: 'min(500px, 95vw)', height: '100%',
-          background: '#0f172a', borderLeft: '1px solid rgba(255,255,255,.15)',
-          display: 'flex', flexDirection: 'column',
-        }}
-      >
-        <div style={{ padding: 16, borderBottom: '1px solid rgba(255,255,255,.15)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 900 }}>📅 Partidos del Día</h2>
-            <p style={{ margin: '4px 0 0', fontSize: 13, opacity: 0.8 }}>Seleccionados por IA con Web Search</p>
-          </div>
-          <button onClick={onClose} style={{...pill, cursor: 'pointer'}}>Cerrar ✕</button>
-        </div>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,.15)' }}>
-          <label style={{...labelCss, marginBottom: 4}}>Seleccionar Fecha</label>
-          <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{...inputCss, padding: '8px 12px'}} />
-        </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
-          {loading && <SkeletonCard />}
-          {error && <p style={{color: '#fecaca'}}>{error}</p>}
-          {data && data.matches.length === 0 && !loading && <p>No se encontraron partidos para esta fecha.</p>}
-          {data && data.matches.length > 0 && (
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {data.matches.map((match, i) => (
-                <li key={i} style={{...panel, padding: 12}}>
-                  <div style={{fontSize: 12, opacity: 0.7}}>{match.competition} - {match.country}</div>
-                  <div style={{fontSize: 16, fontWeight: 'bold', margin: '4px 0'}}>{match.home} <span style={{opacity: 0.7}}>vs</span> {match.away}</div>
-                  <div style={{display: 'flex', gap: 12, fontSize: 12, marginTop: 6}}>
-                    <span><strong>Local:</strong> {match.kickoff_local}</span>
-                    <span><strong>UTC:</strong> {match.kickoff_utc}</span>
-                  </div>
-                  {match.rationale && <p style={{fontSize: 13, opacity: 0.85, margin: '8px 0 0', fontStyle: 'italic'}}>{match.rationale}</p>}
-                  <div style={{marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap'}}>
-                    {match.sources.map((url, j) => <a key={j} href={url} target="_blank" rel="noopener noreferrer" style={{...pill, textDecoration: 'none'}}>Fuente {j+1}</a>)}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // --- APP PRINCIPAL ---
 export default function App() {
+  // ⚙️ Estado
   const [leagues, setLeagues] = useState<string[]>([]);
   const [league, setLeague] = useState("");
   const [teams, setTeams] = useState<string[]>([]);
@@ -657,19 +452,21 @@ export default function App() {
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
+
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
   const [sub, setSub] = useState<SubscriptionState>({ active: false, premium_key: null });
   const [introOpen, setIntroOpen] = useState(!localStorage.getItem("fm_intro_seen"));
+
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [stakeOpen, setStakeOpen] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
-  const [topMatchesOpen, setTopMatchesOpen] = useState(false);
 
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
+  /* === Checkout compacto y portal === */
   const startCheckout = useCallback(
     async (plan: PlanKey = "monthly") => {
       try {
@@ -699,26 +496,31 @@ export default function App() {
     }
   }, [premiumKey]);
 
+  // abre Premium desde Intro (sin modal)
   const goPremium = useCallback(() => {
     setIntroOpen(false);
     localStorage.setItem("fm_intro_seen", "1");
     startCheckout("monthly");
   }, [startCheckout]);
 
+  /* ✅ VALIDAR CLAVE GUARDADA AL ARRANCAR */
   useEffect(() => {
     const k = localStorage.getItem("fm_premium_key") || "";
     setPremiumKey(k);
+
     if (!k) {
       setSub({ active: false, premium_key: null });
       return;
     }
+
     (async () => {
       try {
         const r = await fetch(`${API_BASE}/premium/status`, { headers: { "X-Premium-Key": k } });
         if (!r.ok) throw new Error(await r.text());
         const j = await r.json();
+
         const active = !!(j.active || j.status === "active" || j.status === "trialing");
-        setSub({
+        const next: SubscriptionState = {
           active,
           status: j?.status ?? null,
           plan: j?.plan ?? planFromPriceId(j?.price_id),
@@ -726,7 +528,10 @@ export default function App() {
           current_period_end: j?.current_period_end ?? null,
           premium_key: k,
           email: j?.email ?? null,
-        });
+        };
+
+        setSub(next);
+
         if (!active) {
           localStorage.removeItem("fm_premium_key");
           setPremiumKey("");
@@ -737,8 +542,9 @@ export default function App() {
         setSub({ active: false, premium_key: null });
       }
     })();
-  }, [setPremiumKey]);
+  }, [API_BASE, setPremiumKey]);
 
+  /* 🔁 Refrescar estado cuando cambia premiumKey */
   useEffect(() => {
     if (!premiumKey) return;
     let cancel = false;
@@ -763,17 +569,21 @@ export default function App() {
   }, [premiumKey]);
 
   const redeemHandledRef = useRef(false);
+  /** 🔁 Canjeo de sesión Stripe (?success/&session_id) */
   useEffect(() => {
     const url = new URL(window.location.href);
     const success = url.searchParams.get("success");
     const sessionId = url.searchParams.get("session_id");
     const canceled = url.searchParams.get("canceled");
+
     if (redeemHandledRef.current) return;
+
     if (canceled === "true") {
       window.history.replaceState(null, "", window.location.pathname);
       redeemHandledRef.current = true;
       return;
     }
+
     if (success === "true" && sessionId) {
       const already = sessionStorage.getItem("fm_redeem_sid");
       if (already === sessionId) {
@@ -781,7 +591,9 @@ export default function App() {
         redeemHandledRef.current = true;
         return;
       }
+
       window.history.replaceState(null, "", window.location.pathname);
+
       (async () => {
         try {
           type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
@@ -802,6 +614,7 @@ export default function App() {
     }
   }, [setPremiumKey]);
 
+  /* 🎉 “Premium activado” UNA sola vez */
   const prevActiveRef = useRef<boolean>(false);
   useEffect(() => {
     if (sub.active && !prevActiveRef.current) {
@@ -813,6 +626,7 @@ export default function App() {
     }
   }, [sub.active]);
 
+  // Cargar ligas
   useEffect(() => {
     const controller = new AbortController();
     (async () => {
@@ -828,9 +642,11 @@ export default function App() {
     return () => controller.abort();
   }, [premiumKey]);
 
+  // Cargar equipos por liga
   useEffect(() => {
     setHome(""); setAway(""); setData(null); setErr("");
     if (!league) return setTeams([]);
+
     const controller = new AbortController();
     (async () => {
       try {
@@ -867,6 +683,7 @@ export default function App() {
       if (!mounted.current) return;
       setData(json);
 
+      // Log best-effort
       try {
         const odd = oddFromBestPick(json.best_pick, odds);
         await fetchJSON(`${API_BASE}/history/log`, {
@@ -981,12 +798,14 @@ export default function App() {
           </div>
         </div>
 
+        {/* Paso 1: Selección */}
         <div style={{ ...panel }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <div style={pill}>1️⃣ Selecciona liga y equipos</div>
             <div style={pill}>2️⃣ (Opcional) Ingresar cuotas</div>
             <div style={pill}>3️⃣ Calcular</div>
           </div>
+
           <div className="g3" style={{ marginTop: 12 }}>
             <div>
               <div style={labelCss}>Liga</div>
@@ -1008,8 +827,10 @@ export default function App() {
           </div>
         </div>
 
+        {/* Paso 2: Cuotas opcionales */}
         <OddsEditor odds={odds} setOdds={setOdds} rawOdds={rawOdds} setRawOdds={setRawOdds} />
 
+        {/* CTA fijo inferior */}
         <div className="fixedbar" aria-live="polite">
           <div style={{ fontSize: 12, opacity: 0.8 }}>{canPredict ? "Listo para calcular" : "Selecciona liga y ambos equipos"}</div>
           <button
@@ -1022,33 +843,46 @@ export default function App() {
           </button>
         </div>
 
+        {/* Errores */}
         {err && (
           <div role="alert" style={{ background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.35)", padding: 12, borderRadius: 12, marginTop: 12, color: "#fecaca" }}>
             {err}
           </div>
         )}
 
-        {loading && <SkeletonCard />}
-        
-        <NavDrawer 
-            open={navOpen} 
-            onClose={() => setNavOpen(false)} 
-            onOpenParlay={() => setParlayOpen(true)} 
-            onOpenBuilder={() => setBuilderOpen(true)} 
-            onOpenHistory={() => setHistOpen(true)}
-            onOpenTopMatches={() => setTopMatchesOpen(true)}
-        />
-        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} isPremium={isPremiumUI} />
-        <BuilderDrawer open={builderOpen} onClose={() => setBuilderOpen(false)} home={home} away={away} />
-        <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} />
+        {/* Loading */}
+        {loading && (
+          <div style={{ marginTop: 12 }}>
+            <SkeletonCard />
+          </div>
+        )}
+
+        {/* Drawers */}
+        <NavDrawer open={navOpen} onClose={() => setNavOpen(false)} onOpenParlay={() => setParlayOpen(true)} onOpenBuilder={() => setBuilderOpen(true)} onOpenHistory={() => setHistOpen(true)} />
+
+        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} API_BASE={API_BASE} isPremium={isPremiumUI} premiumKey={premiumKey} />
+
+        <BuilderDrawer open={builderOpen} onClose={() => setBuilderOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
+
+        <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
+
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
-        <TopMatchesDrawer open={topMatchesOpen} onClose={() => setTopMatchesOpen(false)} />
+
+        {/* Banner PWA */}
         <InstallBanner />
 
+        {/* Resultado */}
         {data && !loading && (
           <>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-              <button onClick={() => setStakeOpen(true)} style={{ ...pill, cursor: "pointer", borderColor: "#22c55e", background: "linear-gradient(135deg,#22c55e55,#16a34a55)", fontWeight: 900 }} title="Calcular stake con Kelly">💰 Stake</button>
+              <button
+                onClick={() => setStakeOpen(true)}
+                style={{ ...pill, cursor: "pointer", borderColor: "#22c55e", background: "linear-gradient(135deg,#22c55e55,#16a34a55)", fontWeight: 900 }}
+                title="Calcular stake con Kelly"
+              >
+                💰 Stake
+              </button>
+
               <button
                 onClick={async () => {
                   const body: any = { league, home_team: home, away_team: away };
@@ -1062,8 +896,11 @@ export default function App() {
                 }}
                 style={{ ...pill, cursor: "pointer" }}
                 title="Enviar a Telegram si es value pick"
-              >📣 Alerta</button>
+              >
+                📣 Alerta
+              </button>
             </div>
+
             <div style={{ marginTop: 12 }}>
               <ErrorBoundary>
                 <BestPickPro data={data} odds={odds} />
@@ -1084,10 +921,12 @@ export default function App() {
           />
         )}
 
+        {/* Modal de Planes */}
         <PlansModal
           open={plansOpen}
           onClose={() => setPlansOpen(false)}
           onChoose={(plan) => {
+            setPlansOpen(false);
             startCheckout(plan);
           }}
         />
