@@ -1,26 +1,20 @@
 # backend/top_matches.py
-# === stdlib ===
-import os
-import json
-import re
+import os, json, re
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from typing import Dict, Any, List, Optional
 
-# === terceros ===
+# OpenAI SDK v1.x
 from openai import OpenAI
-from tenacity import retry, wait_exponential, stop_after_attempt
-from zoneinfo import ZoneInfo # Estándar moderno para timezones
 
-# El cliente se inicializa una vez y reutiliza la variable de entorno OPENAI_API_KEY
-_openai_client = OpenAI()
+# ========= CONFIG BÁSICA =========
+TZ = ZoneInfo("America/Mexico_City")
+REQUIRED = ["home","away","competition","country","kickoff_local","kickoff_utc","sources"]
 
-# --- Constantes y Configuración ---
-MEXICO_TZ = ZoneInfo("America/Mexico_City")
-SCHEMA_KEYS_REQUIRED = ["home", "away", "competition", "country", "kickoff_local", "kickoff_utc", "sources"]
+def _default_date_str() -> str:
+    return (datetime.now(TZ).date() + timedelta(days=1)).isoformat()
 
-# --- Funciones de Ayuda ---
-
-def _get_prompt_for_date(target_date: str) -> str:
-    """Genera el prompt de usuario para la fecha especificada."""
+def _prompt_for(target_date: str) -> str:
     return (
         f"Devuélveme EXACTAMENTE 8 partidos de fútbol masculino para el {target_date}, "
         "ordenados por relevancia para audiencia en México. Prioriza selecciones, UEFA (CL/EL/Conf), "
@@ -42,96 +36,89 @@ def _get_prompt_for_date(target_date: str) -> str:
         '      "tv_mexico": "canal/plataforma si aplica",\n'
         '      "importance_score": 0,\n'
         '      "rationale": "máx 40 palabras",\n'
-        '      "sources": ["https://..."]\n'
+        '      "sources": ["https://...","https://..."]\n'
         "    }\n"
         "  ]\n"
         "}\n"
         "Si algún partido no tiene fuentes o la fecha no coincide EXACTAMENTE, descártalo y elige otro."
     )
 
-@retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
-def _fetch_from_openai(prompt: str) -> str:
-    """Llama a la API de OpenAI pidiendo JSON y usando web_search, con reintentos."""
-    completion = _openai_client.chat.completions.create(
+def _parse_json_loose(text: str) -> Dict[str, Any]:
+    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not m:
+        raise ValueError("No se detectó JSON en la salida del modelo.")
+    return json.loads(m.group(0))
+
+def _repair_json_to_schema(client: OpenAI, raw_text_or_data: Any) -> Dict[str, Any]:
+    src = raw_text_or_data if isinstance(raw_text_or_data, str) else json.dumps(raw_text_or_data, ensure_ascii=False)
+    resp = client.chat.completions.create(
         model="gpt-4o-mini",
         response_format={"type": "json_object"},
-        tools=[{"type": "web_search"}],
+        temperature=0,
         messages=[
-            {"role": "system", "content": "Eres un editor deportivo para México. Responde SOLO JSON válido y estructurado. No agregues texto fuera del JSON. Verifica las fechas en las fuentes."},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": "Reforma este texto a JSON válido. No inventes partidos nuevos."},
+            {"role": "user", "content": src},
         ],
-        temperature=0.2,
-        max_tokens=2048,
     )
-    content = completion.choices[0].message.content
-    if not content:
-        raise ValueError("La respuesta de la API de OpenAI vino vacía.")
-    return content
+    return json.loads(resp.choices[0].message.content)
 
-def _validate_payload(payload: dict, target_date: str) -> dict:
-    """Valida que el payload de la IA cumpla con los requisitos del esquema."""
+def _validate(payload: Dict[str, Any], target_date: str) -> Dict[str, Any]:
     if not isinstance(payload, dict):
-        raise TypeError("El payload no es un diccionario JSON válido.")
-
+        raise ValueError("Payload no es dict.")
     payload.setdefault("date", target_date)
-    payload.setdefault("timezone", str(MEXICO_TZ))
+    payload.setdefault("timezone", "America/Mexico_City")
     matches = payload.get("matches", [])
-
-    if not isinstance(matches, list) or len(matches) != 8:
-        raise ValueError(f"Se esperaban 8 partidos, pero se recibieron {len(matches)}.")
-
-    seen_pairs = set()
-    for i, match in enumerate(matches, 1):
-        if not isinstance(match, dict):
-            raise TypeError(f"El partido en el índice {i} no es un objeto válido.")
-        
-        for key in SCHEMA_KEYS_REQUIRED:
-            if key not in match or not match[key]:
-                raise ValueError(f"El partido {i} no tiene el campo requerido o está vacío: '{key}'.")
-        
-        # Validación de URLs en sources
-        sources = match.get("sources", [])
-        if not all(isinstance(url, str) and url.startswith(("http://", "https://")) for url in sources):
-            raise ValueError(f"El partido {i} tiene 'sources' inválidas. Deben ser URLs completas.")
-
-        # Chequeo de duplicados
-        home_away_pair = (str(match["home"]).strip().lower(), str(match["away"]).strip().lower())
-        if home_away_pair in seen_pairs:
-            raise ValueError(f"Partido duplicado encontrado en el índice {i}: {match['home']} vs {match['away']}.")
-        seen_pairs.add(home_away_pair)
-
+    if len(matches) != 8:
+        raise ValueError(f"Se recibieron {len(matches)} partidos; se requieren 8.")
+    seen = set()
+    for i, m in enumerate(matches, 1):
+        for k in REQUIRED:
+            if not m.get(k):
+                raise ValueError(f"Partido {i} carece del campo requerido '{k}'.")
+        pair = (m["home"].strip().lower(), m["away"].strip().lower())
+        if pair in seen:
+            raise ValueError(f"Partido duplicado (home/away) en índice {i}.")
+        seen.add(pair)
+        srcs = m.get("sources", [])
+        if not all(isinstance(u, str) and u.startswith(("http://","https://")) for u in srcs):
+            raise ValueError(f"Partido {i} con 'sources' inválidas.")
     return payload
 
-# --- Función Principal (importada por app.py) ---
+def top_matches_payload(target_date: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Devuelve un dict con:
+      { "date": "YYYY-MM-DD", "timezone":"America/Mexico_City", "matches":[ ... 8 items ... ] }
+    Si falla (tool no disponible, etc), devuelve matches:[] (no inventa).
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY no está configurada.")
+    client = OpenAI(api_key=api_key)
 
-def top_matches_payload(date: str | None = None) -> dict:
-    """
-    Función principal que obtiene y valida 8 partidos de fútbol para una fecha.
-    Si la fecha es None, usa el día de mañana.
-    """
-    try:
-        if date and re.match(r"^\d{4}-\d{2}-\d{2}$", date):
-            target_date = date
-        else:
-            tomorrow = datetime.now(MEXICO_TZ).date() + timedelta(days=1)
-            target_date = tomorrow.isoformat()
-    except Exception:
-        # Fallback si la fecha es inválida
-        tomorrow = datetime.now(MEXICO_TZ).date() + timedelta(days=1)
-        target_date = tomorrow.isoformat()
-        
-    fallback_payload = {
-        "date": target_date,
-        "timezone": str(MEXICO_TZ),
-        "matches": []
-    }
+    target = target_date or _default_date_str()
+
+    # Puedes desactivar búsqueda web si hace falta:
+    if os.getenv("USE_WEB_SEARCH", "1") == "0":
+        return {"date": target, "timezone": "America/Mexico_City", "matches": []}
 
     try:
-        prompt = _get_prompt_for_date(target_date)
-        raw_json_str = _fetch_from_openai(prompt)
-        payload = json.loads(raw_json_str)
-        validated_payload = _validate_payload(payload, target_date)
-        return validated_payload
+        r = client.responses.create(
+            model="gpt-4o-mini",
+            tools=[{"type": "web_search"}],
+            input=[
+                {"role": "system",
+                 "content": "Eres editor deportivo para México. Responde SOLO JSON válido. Verifica fechas en fuentes."},
+                {"role": "user", "content": _prompt_for(target)},
+            ],
+            max_output_tokens=1800,
+        )
+        text = getattr(r, "output_text", None) or r.output[0].content[0].text
+        try:
+            data = _parse_json_loose(text)
+        except Exception:
+            data = _repair_json_to_schema(client, text)
+        data = _validate(data, target)
+        return data
     except Exception as e:
-        print(f"[ERROR] No se pudo generar top_matches para {target_date}: {type(e).__name__} - {e}", file=sys.stderr)
-        return fallback_payload
+        # No inventamos nada si falla web_search o formato.
+        return {"date": target, "timezone": "America/Mexico_City", "matches": [], "error": str(e)}
