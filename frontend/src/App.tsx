@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 // ===============================================
 // ===== IN-FILE COMPONENT DEFINITIONS =====
 // ===============================================
-// To resolve build errors, all components are defined within this single file.
 
 const IntroModal = ({ open, onClose, onGoPremium }: { open: boolean, onClose: () => void, onGoPremium: () => void }) => {
   if (!open) return null;
@@ -21,17 +20,15 @@ const IntroModal = ({ open, onClose, onGoPremium }: { open: boolean, onClose: ()
   );
 };
 
-const BestPickPro = ({ data, odds }: { data: PredictResponse, odds: Odds }) => {
-  return (
-    <div style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 16, padding: 14 }}>
-      <h3 style={{ marginTop: 0 }}>Mejor Selección (PRO)</h3>
-      <p><b>Partido:</b> {data.home_team} vs {data.away_team}</p>
-      <p><b>Mercado:</b> {data.best_pick.market}</p>
-      <p><b>Selección:</b> {data.best_pick.selection}</p>
-      <p><b>Probabilidad:</b> {data.best_pick.prob_pct}%</p>
-    </div>
-  );
-};
+const BestPickPro = ({ data, odds }: { data: PredictResponse, odds: Odds }) => (
+  <div style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 16, padding: 14 }}>
+    <h3 style={{ marginTop: 0 }}>Mejor Selección (PRO)</h3>
+    <p><b>Partido:</b> {data.home_team} vs {data.away_team}</p>
+    <p><b>Mercado:</b> {data.best_pick.market}</p>
+    <p><b>Selección:</b> {data.best_pick.selection}</p>
+    <p><b>Probabilidad:</b> {data.best_pick.prob_pct}%</p>
+  </div>
+);
 
 const ErrorBoundary = ({ children }: { children: React.ReactNode }) => <>{children}</>;
 
@@ -200,7 +197,6 @@ function planFromPriceId(price?: string | null) {
   return null;
 }
 
-// FIX: Replaced import.meta to avoid build warnings
 const LABEL_WEEKLY  = "Semanal   $70.00";
 const LABEL_MONTHLY = "Mensual   $130.00";
 const LABEL_YEARLY  = "Anual     $1199.00";
@@ -238,7 +234,7 @@ function useLocalStorageState<T>(key: string, initial: T) {
 
 async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: string } = {}): Promise<T> {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 45_000);
+  const id = setTimeout(() => controller.abort(), 45_000); // Aumentado a 45 segundos
   try {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
@@ -480,6 +476,16 @@ function PlansModal({
   open: boolean; onClose: () => void;
   onChoose: (plan: PlanKey) => void;
 }) {
+    // Agregamos un estado para deshabilitar los botones mientras se procesa el pago
+    const [isProcessing, setIsProcessing] = useState(false);
+
+    const handleChoose = (plan: PlanKey) => {
+        setIsProcessing(true);
+        onChoose(plan);
+        // El timeout es un fallback por si la redirección falla.
+        setTimeout(() => setIsProcessing(false), 3000); 
+    };
+
   if (!open) return null;
   return (
     <div
@@ -531,17 +537,20 @@ function PlansModal({
           <PlanCard
             label="Semanal" priceLabel={LABEL_WEEKLY}
             bullets={["Ideal para probar funciones Pro.", "Incluye todos los módulos.", "Renovable semanalmente."]}
-            onClick={() => onChoose("weekly")}
+            onClick={() => handleChoose("weekly")}
+            disabled={isProcessing}
           />
           <PlanCard
             label="Mensual" priceLabel={LABEL_MONTHLY}
             bullets={["Uso continuo y soporte prioritario.", "Mejor relación funciones/precio.", "Renovable mensualmente."]}
-            onClick={() => onChoose("monthly")}
+            onClick={() => handleChoose("monthly")}
+            disabled={isProcessing}
           />
           <PlanCard
             label="Anual" priceLabel={LABEL_YEARLY}
             bullets={["Mejor precio por mes.", "Acceso estable toda la temporada.", "Incluye todo lo de Mensual."]}
-            onClick={() => onChoose("annual")}
+            onClick={() => handleChoose("annual")}
+            disabled={isProcessing}
           />
         </div>
 
@@ -1085,7 +1094,7 @@ export default function App() {
             onOpenParlay={() => setParlayOpen(true)} 
             onOpenBuilder={() => setBuilderOpen(true)} 
             onOpenHistory={() => setHistOpen(true)}
-            onOpenTopMatches={() => setTopMatchesOpen(true)} // <-- PROP NUEVA
+            onOpenTopMatches={() => setTopMatchesOpen(true)}
         />
 
         <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} isPremium={isPremiumUI} API_BASE={API_BASE} premiumKey={premiumKey} />
@@ -1096,10 +1105,8 @@ export default function App() {
 
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
         
-        {/* NUEVO DRAWER RENDERIZADO AQUÍ */}
         <TopMatchesDrawer open={topMatchesOpen} onClose={() => setTopMatchesOpen(false)} />
 
-        {/* Banner PWA */}
         <InstallBanner />
 
         {/* Resultado */}
