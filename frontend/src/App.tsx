@@ -452,6 +452,10 @@ export default function App() {
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
+  const [topOpen, setTopOpen] = useState(false);
+  const [topLoading, setTopLoading] = useState(false);
+  const [topErr, setTopErr] = useState("");
+  const [topMatches, setTopMatches] = useState<any[]>([]);
 
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
   const [sub, setSub] = useState<SubscriptionState>({ active: false, premium_key: null });
@@ -502,6 +506,31 @@ export default function App() {
     localStorage.setItem("fm_intro_seen", "1");
     startCheckout("monthly");
   }, [startCheckout]);
+
+    // Cargar 8 partidos TOP desde backend (/top-matches).
+  async function loadTopMatches() {
+    // Si no es premium, abrir modal de planes
+    if (!isPremiumUI) {
+      setPlansOpen(true);
+      return;
+    }
+
+    setTopErr("");
+    setTopLoading(true);
+    setTopMatches([]);
+    try {
+      const j = await fetchJSON<{ matches?: any[] }>(`${API_BASE}/top-matches`, { method: "GET", premiumKey });
+      const matches = Array.isArray(j?.matches) ? j.matches : [];
+      setTopMatches(matches);
+      setTopOpen(true);
+    } catch (e: any) {
+      setTopErr(e?.message || "No pude cargar partidos sugeridos.");
+      setTopOpen(true);
+    } finally {
+      setTopLoading(false);
+    }
+  }
+
 
   /* ✅ VALIDAR CLAVE GUARDADA AL ARRANCAR */
   useEffect(() => {
@@ -805,6 +834,14 @@ export default function App() {
             <div style={pill}>2️⃣ (Opcional) Ingresar cuotas</div>
             <div style={pill}>3️⃣ Calcular</div>
           </div>
+           {/* Botón Sugeridos (GPT) */}
+            <button
+              onClick={loadTopMatches}
+              style={{ ...pill, cursor: "pointer", borderColor: "#7c3aed", fontWeight: 800 }}
+              title="Sugeridos por GPT (8 partidos top)"
+            >
+              🧠 Sugeridos (GPT)
+            </button>
 
           <div className="g3" style={{ marginTop: 12 }}>
             <div>
@@ -919,6 +956,89 @@ export default function App() {
             defaultProb01={stakeDefaults.prob01}
             defaultOdd={stakeDefaults.odd}
           />
+        )}
+
+                {/* Modal: Top Matches (GPT) */}
+        {topOpen && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            style={{
+              position: "fixed", inset: 0, background: "rgba(0,0,0,.55)",
+              display: "grid", placeItems: "center", zIndex: 90
+            }}
+            onClick={() => setTopOpen(false)}
+          >
+            <div onClick={(e) => e.stopPropagation()} style={{
+              width: "min(920px, 96vw)", maxHeight: "80vh", overflow: "auto",
+              background: "linear-gradient(180deg,#0f172a 0%, #0b1020 100%)",
+              border: "1px solid rgba(255,255,255,.12)", borderRadius: 16, padding: 16
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ fontSize: 20, fontWeight: 900 }}>🧠 Partidos sugeridos por GPT</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ ...pill, opacity: 0.9 }}>{isPremiumUI ? "Premium" : "Gratis"}</div>
+                  <button onClick={() => setTopOpen(false)} style={{ ...pill, cursor: "pointer" }}>Cerrar ✕</button>
+                </div>
+              </div>
+
+              {topLoading && <div style={{ ...pill }}>Cargando partidos…</div>}
+              {topErr && <div style={{ ...pill, borderColor: "#ef4444" }}>{topErr}</div>}
+
+              {!topLoading && !topErr && (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {topMatches.length === 0 && <div style={{ ...pill }}>No hay sugerencias disponibles.</div>}
+                  {topMatches.map((m: any, i: number) => (
+                    <div key={i} style={{ border: "1px solid rgba(255,255,255,.06)", borderRadius: 12, padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                        <div style={{ fontWeight: 900 }}>{m.home} vs {m.away}</div>
+                        <div style={{ opacity: 0.85, fontSize: 12 }}>{m.competition} · {m.kickoff_local}</div>
+                      </div>
+                      <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>{m.rationale}</div>
+
+                      <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {(m.sources || []).slice(0,3).map((u: string, k: number) => (
+                            <a key={k} href={u} target="_blank" rel="noreferrer" style={{ ...pill, fontSize: 11 }}>
+                              {new URL(u).hostname}
+                            </a>
+                          ))}
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            onClick={() => {
+                              // Rellenar equipos + intentar ligar la competition con tu lista de leagues
+                              setHome(m.home || "");
+                              setAway(m.away || "");
+                              const guess = (m.competition || "").toLowerCase();
+                              const found = leagues.find((L) => L.toLowerCase().includes(guess));
+                              if (found) setLeague(found);
+                              setTopOpen(false);
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
+                            style={{ ...pill, cursor: "pointer", fontWeight: 800, borderColor: "#7c3aed" }}
+                          >
+                            Usar partido
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              // Si no está premium y quieren abrir planes
+                              if (!isPremiumUI) setPlansOpen(true);
+                            }}
+                            style={{ ...pill, cursor: "pointer" }}
+                          >
+                            {isPremiumUI ? "Seleccionar" : "Ver planes"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Modal de Planes */}
