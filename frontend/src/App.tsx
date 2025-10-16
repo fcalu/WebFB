@@ -200,13 +200,13 @@ const LABEL_WEEKLY  = "Semanal   $70.00";
 const LABEL_MONTHLY = "Mensual   $130.00";
 const LABEL_YEARLY  = "Anual     $1199.00";
 
-// =====> INSTRUCCIÓN IMPORTANTE <=====
-// La siguiente constante define la URL de tu backend.
-// Tu entorno de Vercel debe tener una variable de entorno llamada VITE_API_BASE_URL 
-// con la URL de tu backend en Render (ej: "https://mi-backend.onrender.com").
-const API_BASE: string = 
+/* ===== Config (entorno) ===== */
+// Este bloque es crucial para la conexión. En Vercel, debes configurar una
+// variable de entorno llamada `VITE_API_BASE_URL` con la URL de tu backend en Render.
+const API_BASE: string = (import.meta as any).env?.VITE_API_BASE_URL ||
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
   "http://localhost:8000";
+
 
 /* ===== Helpers ===== */
 const toFloat = (v: unknown) => {
