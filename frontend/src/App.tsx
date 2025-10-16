@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 // ===============================================
 // ===== IN-FILE COMPONENT DEFINITIONS =====
 // ===============================================
+// To resolve build errors, all components are defined within this single file.
 
 const IntroModal = ({ open, onClose, onGoPremium }: { open: boolean, onClose: () => void, onGoPremium: () => void }) => {
   if (!open) return null;
@@ -32,6 +33,7 @@ const BestPickPro = ({ data, odds }: { data: PredictResponse, odds: Odds }) => (
 
 const ErrorBoundary = ({ children }: { children: React.ReactNode }) => <>{children}</>;
 
+// CORRECTED PROPS
 const ParlayDrawer = ({ open, onClose, isPremium, API_BASE, premiumKey }: { open: boolean, onClose: () => void, isPremium: boolean, API_BASE: string, premiumKey: string }) => {
   if (!open) return null;
   return (
@@ -45,6 +47,7 @@ const ParlayDrawer = ({ open, onClose, isPremium, API_BASE, premiumKey }: { open
   );
 };
 
+// CORRECTED PROPS
 const BuilderDrawer = ({ open, onClose, API_BASE, league, home, away, odds, premiumKey }: { open: boolean, onClose: () => void, API_BASE: string, league: string, home: string, away: string, odds: Odds, premiumKey: string }) => {
   if (!open) return null;
   return (
@@ -57,6 +60,7 @@ const BuilderDrawer = ({ open, onClose, API_BASE, league, home, away, odds, prem
   );
 };
 
+// CORRECTED PROPS
 const NavDrawer = ({ open, onClose, onOpenParlay, onOpenBuilder, onOpenHistory, onOpenTopMatches }: { open: boolean, onClose: () => void, onOpenParlay: () => void, onOpenBuilder: () => void, onOpenHistory: () => void, onOpenTopMatches: () => void }) => {
     if (!open) return null;
     const buttonStyle: React.CSSProperties = {
@@ -77,6 +81,7 @@ const NavDrawer = ({ open, onClose, onOpenParlay, onOpenBuilder, onOpenHistory, 
     );
 };
 
+// CORRECTED PROPS
 const IABootDrawer = ({ open, onClose, API_BASE, league, home, away, odds, premiumKey }: { open: boolean, onClose: () => void, API_BASE: string, league: string, home: string, away: string, odds: Odds, premiumKey: string }) => {
   if (!open) return null;
   return (
@@ -91,7 +96,8 @@ const IABootDrawer = ({ open, onClose, API_BASE, league, home, away, odds, premi
 
 const InstallBanner = () => null;
 
-const StakeModal = ({ open, onClose, matchLabel, market, selection, defaultProb01, defaultOdd }: { open: boolean, onClose: () => void, matchLabel: string, market: string, selection: string, defaultProb01: number, defaultOdd: number | undefined }) => {
+// CORRECTED PROPS
+const StakeModal = ({ open, onClose, matchLabel, market, selection, defaultProb01, defaultOdd }: { open: boolean, onClose: () => void, matchLabel: string, market: string, selection: string, defaultProb01: number | undefined, defaultOdd: number | undefined }) => {
   if (!open) return null;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.7)', display: 'grid', placeItems: 'center' }} onClick={onClose}>
@@ -154,7 +160,6 @@ type PredictResponse = {
   debug?: Record<string, unknown>;
 };
 
-// ===== NUEVOS TIPOS PARA TOP MATCHES =====
 type TopMatch = {
   home: string;
   away: string;
@@ -173,7 +178,6 @@ type TopMatchesResponse = {
   timezone: string;
   matches: TopMatch[];
 };
-
 
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
@@ -204,7 +208,7 @@ const LABEL_YEARLY  = "Anual     $1199.00";
 /* ===== Config (entorno) ===== */
 const API_BASE: string =
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
-  "http://localhost:8000";
+  "https://web-fb2-fv5ikayg4-fcalus-projects.vercel.app/"; // <--- REEMPLAZA ESTA LÍNEA SI ES NECESARIO
 
 /* ===== Helpers ===== */
 const toFloat = (v: unknown) => {
@@ -234,7 +238,7 @@ function useLocalStorageState<T>(key: string, initial: T) {
 
 async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: string } = {}): Promise<T> {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 45_000); // Aumentado a 45 segundos
+  const id = setTimeout(() => controller.abort(), 45_000);
   try {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
@@ -328,7 +332,6 @@ function Header({
             <span style={{ display: "block", width: 18, height: 2, background: "#e5e7eb" }} />
           </div>
         </button>
-
         <div
           style={{
             width: 46, height: 46, borderRadius: 14, display: "grid", placeItems: "center",
@@ -344,21 +347,11 @@ function Header({
           <div style={{ opacity: 0.8, fontSize: 13 }}>Predicción clara para usuarios finales</div>
         </div>
       </div>
-
       <div className="quick-actions" style={{ display: "flex", gap: 8 }}>
-        <button onClick={onOpenBuilder} title="Generador de selección" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
-          🎯 Selección
-        </button>
-        <button onClick={onOpenHistory} title="Historial de apuestas" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
-          📒 Historial
-        </button>
-        <button onClick={onOpenParlay} title="Generador de Parley" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
-          🧮 Parley
-        </button>
-        <button onClick={onOpenIABoot} title="IA Boot" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
-          🤖 IA Boot
-        </button>
-
+        <button onClick={onOpenBuilder} title="Generador de selección" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>🎯 Selección</button>
+        <button onClick={onOpenHistory} title="Historial de apuestas" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>📒 Historial</button>
+        <button onClick={onOpenParlay} title="Generador de Parley" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>🧮 Parley</button>
+        <button onClick={onOpenIABoot} title="IA Boot" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>🤖 IA Boot</button>
         {premiumSlot}
       </div>
     </div>
@@ -460,7 +453,8 @@ function PlanCard({
           marginTop: "auto", padding: "12px 14px",
           borderRadius: 12, border: "none", fontWeight: 900,
           cursor: disabled ? "not-allowed" : "pointer",
-          background: "linear-gradient(135deg,#8b5cf6,#6d28d9)", color: "white"
+          background: "linear-gradient(135deg,#8b5cf6,#6d28d9)", color: "white",
+          opacity: disabled ? 0.6 : 1,
         }}
         title="Ir a Stripe"
       >
@@ -476,14 +470,16 @@ function PlansModal({
   open: boolean; onClose: () => void;
   onChoose: (plan: PlanKey) => void;
 }) {
-    // Agregamos un estado para deshabilitar los botones mientras se procesa el pago
     const [isProcessing, setIsProcessing] = useState(false);
 
     const handleChoose = (plan: PlanKey) => {
         setIsProcessing(true);
         onChoose(plan);
-        // El timeout es un fallback por si la redirección falla.
-        setTimeout(() => setIsProcessing(false), 3000); 
+        setTimeout(() => {
+            if (document.visibilityState === 'visible') {
+                setIsProcessing(false);
+            }
+        }, 5000); 
     };
 
   if (!open) return null;
@@ -519,7 +515,6 @@ function PlansModal({
             Cerrar ✕
           </button>
         </div>
-
         <div
           style={{
             marginBottom: 14,
@@ -532,7 +527,6 @@ function PlansModal({
           <b> IA Boot</b>, además de <b>blend con cuotas</b> y <b>soporte prioritario</b>.
           Cancela cuando quieras.
         </div>
-
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 12 }}>
           <PlanCard
             label="Semanal" priceLabel={LABEL_WEEKLY}
@@ -553,7 +547,6 @@ function PlansModal({
             disabled={isProcessing}
           />
         </div>
-
         <div style={{ marginTop: 14, fontSize: 12, opacity: 0.8 }}>
           * Uso educativo/informativo. No constituye asesoría financiera ni garantiza resultados.
         </div>
@@ -573,30 +566,23 @@ function TopMatchesDrawer({ open, onClose }: { open: boolean, onClose: () => voi
 
   useEffect(() => {
     if (!open) return;
-
     let isCancelled = false;
     async function fetchData() {
       setLoading(true);
       setError('');
       try {
         const result = await fetchJSON<TopMatchesResponse>(`${API_BASE}/top-matches?date=${date}`);
-        if (!isCancelled) {
-          setData(result);
-        }
+        if (!isCancelled) setData(result);
       } catch (e: any) {
         if (!isCancelled) {
           setError(e.message || "No se pudieron cargar los partidos.");
           setData(null);
         }
       } finally {
-        if (!isCancelled) {
-          setLoading(false);
-        }
+        if (!isCancelled) setLoading(false);
       }
     }
-
     fetchData();
-
     return () => { isCancelled = true; };
   }, [open, date]);
 
@@ -626,17 +612,10 @@ function TopMatchesDrawer({ open, onClose }: { open: boolean, onClose: () => voi
           </div>
           <button onClick={onClose} style={{...pill, cursor: 'pointer'}}>Cerrar ✕</button>
         </div>
-
         <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,.15)' }}>
           <label style={{...labelCss, marginBottom: 4}}>Seleccionar Fecha</label>
-          <input
-            type="date"
-            value={date}
-            onChange={e => setDate(e.target.value)}
-            style={{...inputCss, padding: '8px 12px'}}
-          />
+          <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{...inputCss, padding: '8px 12px'}} />
         </div>
-
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
           {loading && <SkeletonCard />}
           {error && <p style={{color: '#fecaca'}}>{error}</p>}
@@ -667,7 +646,6 @@ function TopMatchesDrawer({ open, onClose }: { open: boolean, onClose: () => voi
 
 // --- APP PRINCIPAL ---
 export default function App() {
-  // ⚙️ Estado
   const [leagues, setLeagues] = useState<string[]>([]);
   const [league, setLeague] = useState("");
   const [teams, setTeams] = useState<string[]>([]);
@@ -681,22 +659,19 @@ export default function App() {
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
-
   const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
   const [sub, setSub] = useState<SubscriptionState>({ active: false, premium_key: null });
   const [introOpen, setIntroOpen] = useState(!localStorage.getItem("fm_intro_seen"));
-
   const [parlayOpen, setParlayOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
   const [stakeOpen, setStakeOpen] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
-  const [topMatchesOpen, setTopMatchesOpen] = useState(false); // <--- NUEVO ESTADO
+  const [topMatchesOpen, setTopMatchesOpen] = useState(false);
 
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  /* === Checkout compacto y portal === */
   const startCheckout = useCallback(
     async (plan: PlanKey = "monthly") => {
       try {
@@ -726,31 +701,26 @@ export default function App() {
     }
   }, [premiumKey]);
 
-  // abre Premium desde Intro (sin modal)
   const goPremium = useCallback(() => {
     setIntroOpen(false);
     localStorage.setItem("fm_intro_seen", "1");
     startCheckout("monthly");
   }, [startCheckout]);
 
-  /* ✅ VALIDAR CLAVE GUARDADA AL ARRANCAR */
   useEffect(() => {
     const k = localStorage.getItem("fm_premium_key") || "";
     setPremiumKey(k);
-
     if (!k) {
       setSub({ active: false, premium_key: null });
       return;
     }
-
     (async () => {
       try {
         const r = await fetch(`${API_BASE}/premium/status`, { headers: { "X-Premium-Key": k } });
         if (!r.ok) throw new Error(await r.text());
         const j = await r.json();
-
         const active = !!(j.active || j.status === "active" || j.status === "trialing");
-        const next: SubscriptionState = {
+        setSub({
           active,
           status: j?.status ?? null,
           plan: j?.plan ?? planFromPriceId(j?.price_id),
@@ -758,10 +728,7 @@ export default function App() {
           current_period_end: j?.current_period_end ?? null,
           premium_key: k,
           email: j?.email ?? null,
-        };
-
-        setSub(next);
-
+        });
         if (!active) {
           localStorage.removeItem("fm_premium_key");
           setPremiumKey("");
@@ -774,7 +741,6 @@ export default function App() {
     })();
   }, [setPremiumKey]);
 
-  /* 🔁 Refrescar estado cuando cambia premiumKey */
   useEffect(() => {
     if (!premiumKey) return;
     let cancel = false;
@@ -799,21 +765,17 @@ export default function App() {
   }, [premiumKey]);
 
   const redeemHandledRef = useRef(false);
-  /** 🔁 Canjeo de sesión Stripe (?success/&session_id) */
   useEffect(() => {
     const url = new URL(window.location.href);
     const success = url.searchParams.get("success");
     const sessionId = url.searchParams.get("session_id");
     const canceled = url.searchParams.get("canceled");
-
     if (redeemHandledRef.current) return;
-
     if (canceled === "true") {
       window.history.replaceState(null, "", window.location.pathname);
       redeemHandledRef.current = true;
       return;
     }
-
     if (success === "true" && sessionId) {
       const already = sessionStorage.getItem("fm_redeem_sid");
       if (already === sessionId) {
@@ -821,9 +783,7 @@ export default function App() {
         redeemHandledRef.current = true;
         return;
       }
-
       window.history.replaceState(null, "", window.location.pathname);
-
       (async () => {
         try {
           type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
@@ -844,7 +804,6 @@ export default function App() {
     }
   }, [setPremiumKey]);
 
-  /* 🎉 “Premium activado” UNA sola vez */
   const prevActiveRef = useRef<boolean>(false);
   useEffect(() => {
     if (sub.active && !prevActiveRef.current) {
@@ -856,7 +815,6 @@ export default function App() {
     }
   }, [sub.active]);
 
-  // Cargar ligas
   useEffect(() => {
     const controller = new AbortController();
     (async () => {
@@ -872,11 +830,9 @@ export default function App() {
     return () => controller.abort();
   }, [premiumKey]);
 
-  // Cargar equipos por liga
   useEffect(() => {
     setHome(""); setAway(""); setData(null); setErr("");
     if (!league) return setTeams([]);
-
     const controller = new AbortController();
     (async () => {
       try {
@@ -913,7 +869,6 @@ export default function App() {
       if (!mounted.current) return;
       setData(json);
 
-      // Log best-effort
       try {
         const odd = oddFromBestPick(json.best_pick, odds);
         await fetchJSON(`${API_BASE}/history/log`, {
@@ -1028,14 +983,12 @@ export default function App() {
           </div>
         </div>
 
-        {/* Paso 1: Selección */}
         <div style={{ ...panel }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <div style={pill}>1️⃣ Selecciona liga y equipos</div>
             <div style={pill}>2️⃣ (Opcional) Ingresar cuotas</div>
             <div style={pill}>3️⃣ Calcular</div>
           </div>
-
           <div className="g3" style={{ marginTop: 12 }}>
             <div>
               <div style={labelCss}>Liga</div>
@@ -1057,10 +1010,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Paso 2: Cuotas opcionales */}
         <OddsEditor odds={odds} setOdds={setOdds} rawOdds={rawOdds} setRawOdds={setRawOdds} />
 
-        {/* CTA fijo inferior */}
         <div className="fixedbar" aria-live="polite">
           <div style={{ fontSize: 12, opacity: 0.8 }}>{canPredict ? "Listo para calcular" : "Selecciona liga y ambos equipos"}</div>
           <button
@@ -1073,21 +1024,14 @@ export default function App() {
           </button>
         </div>
 
-        {/* Errores */}
         {err && (
           <div role="alert" style={{ background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.35)", padding: 12, borderRadius: 12, marginTop: 12, color: "#fecaca" }}>
             {err}
           </div>
         )}
 
-        {/* Loading */}
-        {loading && (
-          <div style={{ marginTop: 12 }}>
-            <SkeletonCard />
-          </div>
-        )}
-
-        {/* Drawers */}
+        {loading && <SkeletonCard />}
+        
         <NavDrawer 
             open={navOpen} 
             onClose={() => setNavOpen(false)} 
@@ -1096,31 +1040,17 @@ export default function App() {
             onOpenHistory={() => setHistOpen(true)}
             onOpenTopMatches={() => setTopMatchesOpen(true)}
         />
-
         <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} isPremium={isPremiumUI} API_BASE={API_BASE} premiumKey={premiumKey} />
-        
         <BuilderDrawer open={builderOpen} onClose={() => setBuilderOpen(false)} home={home} away={away} API_BASE={API_BASE} league={league} odds={odds} premiumKey={premiumKey} />
-
         <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
-
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
-        
         <TopMatchesDrawer open={topMatchesOpen} onClose={() => setTopMatchesOpen(false)} />
-
         <InstallBanner />
 
-        {/* Resultado */}
         {data && !loading && (
           <>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-              <button
-                onClick={() => setStakeOpen(true)}
-                style={{ ...pill, cursor: "pointer", borderColor: "#22c55e", background: "linear-gradient(135deg,#22c55e55,#16a34a55)", fontWeight: 900 }}
-                title="Calcular stake con Kelly"
-              >
-                💰 Stake
-              </button>
-
+              <button onClick={() => setStakeOpen(true)} style={{ ...pill, cursor: "pointer", borderColor: "#22c55e", background: "linear-gradient(135deg,#22c55e55,#16a34a55)", fontWeight: 900 }} title="Calcular stake con Kelly">💰 Stake</button>
               <button
                 onClick={async () => {
                   const body: any = { league, home_team: home, away_team: away };
@@ -1134,11 +1064,8 @@ export default function App() {
                 }}
                 style={{ ...pill, cursor: "pointer" }}
                 title="Enviar a Telegram si es value pick"
-              >
-                📣 Alerta
-              </button>
+              >📣 Alerta</button>
             </div>
-
             <div style={{ marginTop: 12 }}>
               <ErrorBoundary>
                 <BestPickPro data={data} odds={odds} />
@@ -1159,12 +1086,10 @@ export default function App() {
           />
         )}
 
-        {/* Modal de Planes */}
         <PlansModal
           open={plansOpen}
           onClose={() => setPlansOpen(false)}
           onChoose={(plan) => {
-            setPlansOpen(false);
             startCheckout(plan);
           }}
         />
