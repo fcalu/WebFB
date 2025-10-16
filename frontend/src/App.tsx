@@ -33,8 +33,7 @@ const BestPickPro = ({ data, odds }: { data: PredictResponse, odds: Odds }) => (
 
 const ErrorBoundary = ({ children }: { children: React.ReactNode }) => <>{children}</>;
 
-// CORRECTED PROPS
-const ParlayDrawer = ({ open, onClose, isPremium, API_BASE, premiumKey }: { open: boolean, onClose: () => void, isPremium: boolean, API_BASE: string, premiumKey: string }) => {
+const ParlayDrawer = ({ open, onClose, isPremium }: { open: boolean, onClose: () => void, isPremium: boolean }) => {
   if (!open) return null;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
@@ -47,8 +46,7 @@ const ParlayDrawer = ({ open, onClose, isPremium, API_BASE, premiumKey }: { open
   );
 };
 
-// CORRECTED PROPS
-const BuilderDrawer = ({ open, onClose, API_BASE, league, home, away, odds, premiumKey }: { open: boolean, onClose: () => void, API_BASE: string, league: string, home: string, away: string, odds: Odds, premiumKey: string }) => {
+const BuilderDrawer = ({ open, onClose, home, away }: { open: boolean, onClose: () => void, home: string, away: string }) => {
   if (!open) return null;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
@@ -60,7 +58,6 @@ const BuilderDrawer = ({ open, onClose, API_BASE, league, home, away, odds, prem
   );
 };
 
-// CORRECTED PROPS
 const NavDrawer = ({ open, onClose, onOpenParlay, onOpenBuilder, onOpenHistory, onOpenTopMatches }: { open: boolean, onClose: () => void, onOpenParlay: () => void, onOpenBuilder: () => void, onOpenHistory: () => void, onOpenTopMatches: () => void }) => {
     if (!open) return null;
     const buttonStyle: React.CSSProperties = {
@@ -81,8 +78,7 @@ const NavDrawer = ({ open, onClose, onOpenParlay, onOpenBuilder, onOpenHistory, 
     );
 };
 
-// CORRECTED PROPS
-const IABootDrawer = ({ open, onClose, API_BASE, league, home, away, odds, premiumKey }: { open: boolean, onClose: () => void, API_BASE: string, league: string, home: string, away: string, odds: Odds, premiumKey: string }) => {
+const IABootDrawer = ({ open, onClose }: { open: boolean, onClose: () => void }) => {
   if (!open) return null;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
@@ -96,7 +92,6 @@ const IABootDrawer = ({ open, onClose, API_BASE, league, home, away, odds, premi
 
 const InstallBanner = () => null;
 
-// CORRECTED PROPS
 const StakeModal = ({ open, onClose, matchLabel, market, selection, defaultProb01, defaultOdd }: { open: boolean, onClose: () => void, matchLabel: string, market: string, selection: string, defaultProb01: number | undefined, defaultOdd: number | undefined }) => {
   if (!open) return null;
   return (
@@ -205,10 +200,13 @@ const LABEL_WEEKLY  = "Semanal   $70.00";
 const LABEL_MONTHLY = "Mensual   $130.00";
 const LABEL_YEARLY  = "Anual     $1199.00";
 
-/* ===== Config (entorno) ===== */
-const API_BASE: string =
+// =====> INSTRUCCIÓN IMPORTANTE <=====
+// La siguiente constante define la URL de tu backend.
+// Tu entorno de Vercel debe tener una variable de entorno llamada VITE_API_BASE_URL 
+// con la URL de tu backend en Render (ej: "https://mi-backend.onrender.com").
+const API_BASE: string = 
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
-  "https://web-fb2-fv5ikayg4-fcalus-projects.vercel.app/"; // <--- REEMPLAZA ESTA LÍNEA SI ES NECESARIO
+  "http://localhost:8000";
 
 /* ===== Helpers ===== */
 const toFloat = (v: unknown) => {
@@ -1040,9 +1038,9 @@ export default function App() {
             onOpenHistory={() => setHistOpen(true)}
             onOpenTopMatches={() => setTopMatchesOpen(true)}
         />
-        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} isPremium={isPremiumUI} API_BASE={API_BASE} premiumKey={premiumKey} />
-        <BuilderDrawer open={builderOpen} onClose={() => setBuilderOpen(false)} home={home} away={away} API_BASE={API_BASE} league={league} odds={odds} premiumKey={premiumKey} />
-        <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} API_BASE={API_BASE} league={league} home={home} away={away} odds={odds} premiumKey={premiumKey} />
+        <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} isPremium={isPremiumUI} />
+        <BuilderDrawer open={builderOpen} onClose={() => setBuilderOpen(false)} home={home} away={away} />
+        <IABootDrawer open={iaOpen} onClose={() => setIaOpen(false)} />
         <BetHistoryDrawer open={histOpen} onClose={() => setHistOpen(false)} />
         <TopMatchesDrawer open={topMatchesOpen} onClose={() => setTopMatchesOpen(false)} />
         <InstallBanner />
@@ -1097,4 +1095,3 @@ export default function App() {
     </div>
   );
 }
-
