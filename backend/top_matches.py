@@ -1,7 +1,6 @@
 import os
 import sys
 import json
-import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Dict, Any, Optional
@@ -11,39 +10,34 @@ from tenacity import retry, wait_exponential, stop_after_attempt
 
 # --- CONFIGURACIÓN ---
 TZ = ZoneInfo("America/Mexico_City")
-REQUIRED_KEYS = ["home", "away", "competition", "country", "kickoff_local", "kickoff_utc", "sources"]
-
 try:
     client = OpenAI()
-    print("[INFO] Cliente de OpenAI inicializado correctamente.", file=sys.stderr)
+    print("[INFO] Cliente de OpenAI inicializado.", file=sys.stderr)
 except Exception as e:
-    print(f"[ERROR CRÍTICO] No se pudo inicializar el cliente de OpenAI. Revisa la API Key. Error: {e}", file=sys.stderr)
+    print(f"[ERROR CRÍTICO] No se pudo inicializar OpenAI. Revisa la API Key. Error: {e}", file=sys.stderr)
     client = None
 
 def _get_prompt_for_date(target_date: str) -> str:
+    # Prompt simplificado que no depende de herramientas externas
     return (
-        f"Devuélveme EXACTAMENTE 8 partidos de fútbol masculino para el {target_date}, "
-        "ordenados por relevancia para audiencia en México. Prioriza selecciones, UEFA (CL/EL/Conf), "
-        "Premier, LaLiga, Serie A, Bundesliga, Ligue 1, CONMEBOL/CONCACAF y clásicos relevantes. "
-        "Convierte la hora a America/Mexico_City (HH:MM 24h) e incluye también hora UTC. "
-        "NO inventes. Usa búsqueda web (web_search) y coloca 1–3 URLs REALES por partido en 'sources'. "
-        "Evita duplicados. Responde SOLO un JSON con este formato EXACTO:\n\n"
-        '{"date":"YYYY-MM-DD","timezone":"America/Mexico_City","matches":[{"home":"Equipo","away":"Equipo","competition":"Liga/Torneo","country":"País","kickoff_local":"HH:MM","kickoff_utc":"HH:MM","tv_mexico":"canal/plataforma","importance_score":0,"rationale":"máx 40 palabras","sources":["https://..."]}]}'
-        "\nSi algún partido no tiene fuentes o la fecha no coincide EXACTAMENTE, descártalo y elige otro."
+        f"Devuelve un objeto JSON con los 8 partidos de fútbol masculino más importantes a nivel mundial para la fecha {target_date}. "
+        "Prioriza partidos de selecciones, torneos UEFA, las 5 grandes ligas de Europa y clásicos relevantes para México. "
+        "Calcula la hora para 'America/Mexico_City' (formato HH:MM 24h) y también en UTC. "
+        "No incluyas partidos si no estás seguro de la fecha. La respuesta debe ser únicamente el objeto JSON, sin texto adicional."
     )
 
-@retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(2))
-def _fetch_with_websearch(prompt: str) -> str:
-    """Paso 1: Llama a la API con web_search, esperando una respuesta de texto."""
+@retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
+def _fetch_json_from_openai(prompt: str) -> str:
+    """Llama a la API de OpenAI pidiendo directamente una respuesta JSON."""
     if not client:
         raise RuntimeError("El cliente de OpenAI no está disponible.")
     
-    print("[INFO] Paso 1: Realizando llamada a OpenAI con web_search...", file=sys.stderr)
+    print("[INFO] Realizando llamada directa a OpenAI para obtener JSON...", file=sys.stderr)
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        tools=[{"type": "web_search"}],
+        response_format={"type": "json_object"}, # El método más fiable para obtener JSON
         messages=[
-            {"role": "system", "content": "Eres un editor deportivo para México. Tu respuesta DEBE contener un bloque de código JSON. Verifica las fechas en las fuentes."},
+            {"role": "system", "content": "Eres un editor deportivo experto en fútbol mundial. Tu única respuesta es un objeto JSON bien formado."},
             {"role": "user", "content": prompt}
         ],
         temperature=0.1,
@@ -51,39 +45,9 @@ def _fetch_with_websearch(prompt: str) -> str:
     )
     content = completion.choices[0].message.content
     if not content:
-        raise ValueError("La respuesta de la API (paso 1) vino vacía.")
-    print(f"[INFO] Paso 1: OpenAI respondió con texto. Contenido parcial: {content[:300]}...", file=sys.stderr)
+        raise ValueError("La respuesta de la API de OpenAI vino vacía.")
+    print(f"[INFO] OpenAI respondió con JSON. Contenido parcial: {content[:300]}...", file=sys.stderr)
     return content
-
-def _clean_and_parse_json(raw_text: str) -> Dict[str, Any]:
-    """Paso 2: Extrae y si es necesario, repara el texto para obtener un JSON válido."""
-    # Intenta extraer el JSON directamente
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if not match:
-        print("[WARN] No se encontró un bloque JSON en la respuesta inicial. Intentando reparar el texto completo.", file=sys.stderr)
-        text_to_parse = raw_text
-    else:
-        text_to_parse = match.group(0)
-
-    try:
-        # Intenta parsear directamente
-        return json.loads(text_to_parse)
-    except json.JSONDecodeError:
-        print("[WARN] El JSON extraído es inválido. Pidiendo a la IA que lo repare...", file=sys.stderr)
-        # Si falla, pide a la IA que lo limpie (sin web_search, más rápido y barato)
-        completion = client.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": "Convierte el siguiente texto a un objeto JSON válido y completo. No inventes datos."},
-                {"role": "user", "content": text_to_parse}
-            ],
-        )
-        repaired_content = completion.choices[0].message.content
-        if not repaired_content:
-            raise ValueError("La API de reparación de JSON devolvió una respuesta vacía.")
-        print("[INFO] JSON reparado con éxito.", file=sys.stderr)
-        return json.loads(repaired_content)
 
 def top_matches_payload(target_date: Optional[str] = None) -> Dict[str, Any]:
     target = target_date or (datetime.now(TZ).date() + timedelta(days=1)).isoformat()
@@ -95,17 +59,19 @@ def top_matches_payload(target_date: Optional[str] = None) -> Dict[str, Any]:
     }
 
     if not client:
-        print("[ERROR] El cliente de OpenAI no se inicializó. Devolviendo payload vacío.", file=sys.stderr)
+        print("[ERROR] Cliente de OpenAI no inicializado. Devolviendo payload vacío.", file=sys.stderr)
         fallback_payload["error"] = "OpenAI client not initialized. Check API Key."
         return fallback_payload
 
     try:
         prompt = _get_prompt_for_date(target)
-        raw_text_response = _fetch_with_websearch(prompt)
-        payload = _clean_and_parse_json(raw_text_response)
+        json_string = _fetch_json_from_openai(prompt)
+        payload = json.loads(json_string)
         
-        # Aquí puedes añadir tu función de validación si lo deseas
-        # payload = _validate(payload, target)
+        # Asegurarnos de que los campos básicos existan
+        payload.setdefault("date", target)
+        payload.setdefault("timezone", "America/Mexico_City")
+        payload.setdefault("matches", [])
         
         return payload
 
