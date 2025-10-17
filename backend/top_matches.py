@@ -12,9 +12,10 @@ from tenacity import retry, wait_exponential, stop_after_attempt
 # --- CONFIGURACIÓN ---
 TZ = ZoneInfo("America/Mexico_City")
 REQUIRED_KEYS = ["home", "away", "competition", "country", "kickoff_local", "kickoff_utc", "sources"]
-# Instancia única del cliente de OpenAI, que leerá la variable de entorno automáticamente.
+
 try:
     client = OpenAI()
+    print("[INFO] Cliente de OpenAI inicializado correctamente.", file=sys.stderr)
 except Exception as e:
     print(f"[ERROR CRÍTICO] No se pudo inicializar el cliente de OpenAI. Revisa la API Key. Error: {e}", file=sys.stderr)
     client = None
@@ -31,33 +32,58 @@ def _get_prompt_for_date(target_date: str) -> str:
         "\nSi algún partido no tiene fuentes o la fecha no coincide EXACTAMENTE, descártalo y elige otro."
     )
 
-@retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
-def _fetch_from_openai(prompt: str) -> str:
-    """Llama a la API de OpenAI pidiendo JSON y usando web_search, con reintentos."""
+@retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(2))
+def _fetch_with_websearch(prompt: str) -> str:
+    """Paso 1: Llama a la API con web_search, esperando una respuesta de texto."""
     if not client:
         raise RuntimeError("El cliente de OpenAI no está disponible.")
     
-    print("[INFO] Realizando llamada a OpenAI con web_search...", file=sys.stderr)
+    print("[INFO] Paso 1: Realizando llamada a OpenAI con web_search...", file=sys.stderr)
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        response_format={"type": "json_object"},
         tools=[{"type": "web_search"}],
         messages=[
-            {"role": "system", "content": "Eres un editor deportivo para México. Responde SOLO JSON válido y estructurado. Verifica las fechas en las fuentes."},
+            {"role": "system", "content": "Eres un editor deportivo para México. Tu respuesta DEBE contener un bloque de código JSON. Verifica las fechas en las fuentes."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.2,
+        temperature=0.1,
         max_tokens=2048,
     )
     content = completion.choices[0].message.content
     if not content:
-        raise ValueError("La respuesta de la API de OpenAI vino vacía.")
-    print(f"[INFO] OpenAI respondió con éxito. Contenido parcial: {content[:300]}...", file=sys.stderr)
+        raise ValueError("La respuesta de la API (paso 1) vino vacía.")
+    print(f"[INFO] Paso 1: OpenAI respondió con texto. Contenido parcial: {content[:300]}...", file=sys.stderr)
     return content
 
-def _validate(payload: Dict[str, Any], target_date: str) -> Dict[str, Any]:
-    # ... (Tu función de validación es buena, la mantenemos sin cambios) ...
-    return payload
+def _clean_and_parse_json(raw_text: str) -> Dict[str, Any]:
+    """Paso 2: Extrae y si es necesario, repara el texto para obtener un JSON válido."""
+    # Intenta extraer el JSON directamente
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+    if not match:
+        print("[WARN] No se encontró un bloque JSON en la respuesta inicial. Intentando reparar el texto completo.", file=sys.stderr)
+        text_to_parse = raw_text
+    else:
+        text_to_parse = match.group(0)
+
+    try:
+        # Intenta parsear directamente
+        return json.loads(text_to_parse)
+    except json.JSONDecodeError:
+        print("[WARN] El JSON extraído es inválido. Pidiendo a la IA que lo repare...", file=sys.stderr)
+        # Si falla, pide a la IA que lo limpie (sin web_search, más rápido y barato)
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "Convierte el siguiente texto a un objeto JSON válido y completo. No inventes datos."},
+                {"role": "user", "content": text_to_parse}
+            ],
+        )
+        repaired_content = completion.choices[0].message.content
+        if not repaired_content:
+            raise ValueError("La API de reparación de JSON devolvió una respuesta vacía.")
+        print("[INFO] JSON reparado con éxito.", file=sys.stderr)
+        return json.loads(repaired_content)
 
 def top_matches_payload(target_date: Optional[str] = None) -> Dict[str, Any]:
     target = target_date or (datetime.now(TZ).date() + timedelta(days=1)).isoformat()
@@ -75,13 +101,16 @@ def top_matches_payload(target_date: Optional[str] = None) -> Dict[str, Any]:
 
     try:
         prompt = _get_prompt_for_date(target)
-        raw_json_str = _fetch_from_openai(prompt)
-        payload = json.loads(raw_json_str)
-        # validated_payload = _validate(payload, target) # Puedes reactivar la validación si es necesario
+        raw_text_response = _fetch_with_websearch(prompt)
+        payload = _clean_and_parse_json(raw_text_response)
+        
+        # Aquí puedes añadir tu función de validación si lo deseas
+        # payload = _validate(payload, target)
+        
         return payload
 
     except Exception as e:
-        print(f"[ERROR] Ocurrió una excepción en top_matches_payload: {type(e).__name__} - {e}", file=sys.stderr)
+        print(f"[ERROR] Ocurrió una excepción final en top_matches_payload: {type(e).__name__} - {e}", file=sys.stderr)
         fallback_payload["error"] = str(e)
         return fallback_payload
 
