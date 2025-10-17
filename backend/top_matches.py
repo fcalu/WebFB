@@ -18,12 +18,23 @@ except Exception as e:
     client = None
 
 def _get_prompt_for_date(target_date: str) -> str:
-    # Prompt simplificado que no depende de herramientas externas
+    """
+    Un prompt profesional y estricto para obtener partidos de fútbol reales y bien formados.
+    Utiliza la técnica de "one-shot learning" con un ejemplo claro.
+    """
     return (
-        f"Devuelve un objeto JSON con los 8 partidos de fútbol masculino más importantes a nivel mundial para la fecha {target_date}. "
-        "Prioriza partidos de selecciones, torneos UEFA, las 5 grandes ligas de Europa y clásicos relevantes para México. "
-        "Calcula la hora para 'America/Mexico_City' (formato HH:MM 24h) y también en UTC. "
-        "No incluyas partidos si no estás seguro de la fecha. La respuesta debe ser únicamente el objeto JSON, sin texto adicional."
+        f"Tu tarea es generar un objeto JSON con una lista de exactamente 8 partidos de fútbol masculino REALES y verificables para la fecha {target_date}. "
+        "NO inventes partidos bajo ninguna circunstancia. Si no puedes encontrar 8 partidos reales, es preferible que devuelvas menos. "
+        "Tu respuesta debe ser únicamente el objeto JSON, sin texto adicional, siguiendo esta estructura exacta:\n\n"
+        '{"date":"YYYY-MM-DD", "timezone":"America/Mexico_City", "matches":[...]}'
+        "\n\n"
+        "Cada partido en la lista 'matches' debe tener estos campos exactos: "
+        "'home', 'away', 'competition', 'country', 'kickoff_local' (formato HH:MM para America/Mexico_City), "
+        "'kickoff_utc' (formato HH:MM), y 'sources' (una lista con 1 o 2 URLs de fuentes deportivas conocidas como ESPN, BBC Sport, etc.).\n\n"
+        "Ejemplo de un partido en la lista:\n"
+        '{"home":"Club América", "away":"Cruz Azul", "competition":"Liga MX", "country":"Mexico", "kickoff_local":"21:05", "kickoff_utc":"03:05", "sources":["https://www.espn.com/soccer/match/_/gameId/12345"]}'
+        "\n\n"
+        f"Ahora, genera el JSON completo para la fecha {target_date}."
     )
 
 @retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
@@ -32,16 +43,16 @@ def _fetch_json_from_openai(prompt: str) -> str:
     if not client:
         raise RuntimeError("El cliente de OpenAI no está disponible.")
     
-    print("[INFO] Realizando llamada directa a OpenAI para obtener JSON...", file=sys.stderr)
+    print("[INFO] Realizando llamada a OpenAI con prompt profesional...", file=sys.stderr)
     completion = client.chat.completions.create(
-        model="gpt-4o-mini",
-        response_format={"type": "json_object"}, # El método más fiable para obtener JSON
+        model="gpt-4o", # Usamos gpt-4o para mayor fiabilidad y conocimiento actualizado
+        response_format={"type": "json_object"},
         messages=[
-            {"role": "system", "content": "Eres un editor deportivo experto en fútbol mundial. Tu única respuesta es un objeto JSON bien formado."},
+            {"role": "system", "content": "Eres un API de datos deportivos. Tu única respuesta es un objeto JSON bien formado basado en hechos reales."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.1,
-        max_tokens=2048,
+        temperature=0.0, # Temperatura 0 para respuestas deterministas y basadas en hechos
+        max_tokens=2500,
     )
     content = completion.choices[0].message.content
     if not content:
@@ -68,7 +79,6 @@ def top_matches_payload(target_date: Optional[str] = None) -> Dict[str, Any]:
         json_string = _fetch_json_from_openai(prompt)
         payload = json.loads(json_string)
         
-        # Asegurarnos de que los campos básicos existan
         payload.setdefault("date", target)
         payload.setdefault("timezone", "America/Mexico_City")
         payload.setdefault("matches", [])
