@@ -1,9 +1,9 @@
-# backend/app.py (CÓDIGO COMPLETO - SIN PAGOS - CON INTEGRACIÓN REAL DE ESPN)
+# backend/app.py (CÓDIGO COMPLETO - ESPN MAÑANA - SIN PAGOS)
 
 # === stdlib ===
 import os, sys, time, glob, math, re, secrets, sqlite3, json
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta # <-- Usamos timedelta para mañana
 
 # === terceros ===
 import numpy as np
@@ -19,12 +19,10 @@ from tenacity import retry, wait_exponential, stop_after_attempt
 
 # === OpenAI / retry ===
 from openai import OpenAI
-# Importa LogisticRegression de sklearn para calibración
 try:
     from sklearn.linear_model import LogisticRegression
     SKLEARN_OK = True
 except ImportError:
-    print("ADVERTENCIA: sklearn no instalado. La calibración de modelos será omitida.", file=sys.stderr)
     SKLEARN_OK = False
 
 
@@ -32,7 +30,7 @@ except ImportError:
 DOMAIN = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-# URL de API de ESPN (Basado en la documentación comunitaria)
+# URL de API de ESPN
 ESPN_SCOREBOARD_BASE_URL = "https://site.api.espn.com/apis/site/v2/sports"
 ESPN_CORE_ODDS_BASE_URL = "https://sports.core.api.espn.com/v2/sports"
 
@@ -60,12 +58,10 @@ POISSON_MAX_GOALS = 7
 try:
     _openai_client = OpenAI()
 except Exception:
-    print("ADVERTENCIA: OpenAI no inicializado. IABoot no funcionará.", file=sys.stderr)
     IABOOT_ON = False
     
 app = FastAPI(title="FootyMines API (hybrid-core)")
 
-# CORS abierto (ajusta si necesitas)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -79,9 +75,8 @@ app.add_middleware(
 # LÓGICA CORE: PREDICCIÓN, UTILIDADES Y CLASES
 # --------------------------------------------------------------------------------------
 
-# Lógica de Validación (siempre True al eliminar el gateo Premium)
+# Lógica de Validación (siempre True)
 def check_premium(key: Optional[str], request: Optional[Request] = None):
-    """ Función de compatibilidad que siempre retorna True. """
     return True
 
 # Funciones de utilidades generales (clamp01, logit, sigmoid, blend_logit, etc.)
@@ -102,7 +97,7 @@ def implied_1x2(odds: Dict[str, float]) -> Optional[Dict[str, float]]:
     try:
         o1, ox, o2 = float(odds.get("1", 0)), float(odds.get("X", 0)), float(odds.get("2", 0))
     except Exception: return None
-    if min(o1, ox, o2) <= 1.05: return None # Ignorar cuotas inválidas
+    if min(o1, ox, o2) <= 1.05: return None
     inv = np.array([1.0 / o1, 1.0 / ox, 1.0 / o2], dtype=float)
     s = inv.sum()
     if s <= 0: return None
@@ -263,22 +258,18 @@ def cache_key(league: str, home: str, away: str, odds: Optional[Dict[str, float]
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3))
 def _fetch_scoreboard_data(sport: str, league: str, date: str) -> Optional[dict]:
-    """Obtiene el Scoreboard (partidos) de una liga para una fecha específica desde ESPN."""
     url = f"{ESPN_SCOREBOARD_BASE_URL}/{sport}/{league}/scoreboard"
     try:
         params = {"dates": date}; headers = {"Accept": "application/json"}
         response = requests.get(url, params=params, headers=headers, timeout=5)
         response.raise_for_status(); return response.json()
     except RequestException as e:
-        print(f"Error al consultar Scoreboard ESPN ({url}, {date}): {e}", file=sys.stderr)
         return None
     except Exception as e:
-        print(f"Error inesperado al parsear Scoreboard: {e}", file=sys.stderr)
         return None
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3))
 def _fetch_odds_data(sport: str, league: str, event_id: str) -> Optional[Dict[str, float]]:
-    """Obtiene las cuotas de un evento específico desde ESPN Core Odds."""
     url = f"{ESPN_CORE_ODDS_BASE_URL}/{sport}/leagues/{league}/events/{event_id}/competitions/{event_id}/odds"
     odds = {}
     try:
@@ -303,13 +294,17 @@ def _fetch_odds_data(sport: str, league: str, event_id: str) -> Optional[Dict[st
     except RequestException:
         return None
     except Exception as e:
-        print(f"Error inesperado al parsear Odds: {e}", file=sys.stderr)
         return None
 
 
 def top_matches_payload(date: str | None = None):
-    """Lógica para obtener partidos y cuotas reales de ESPN para /top-matches."""
-    if not date: date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    """Lógica para obtener partidos y cuotas reales de ESPN. Usa MAÑANA por defecto."""
+    
+    if not date:
+        # Pide partidos de MAÑANA
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+        date = tomorrow.strftime("%Y%m%d")
+    
     SPORT, LEAGUE = DEFAULT_SPORT, DEFAULT_LEAGUE
 
     data = _fetch_scoreboard_data(SPORT, LEAGUE, date)
@@ -337,14 +332,11 @@ def top_matches_payload(date: str | None = None):
                 "away_team": away_team,
                 "date": event.get("date"),
                 "odds": odds,
-                "home": home_team, # Para compatibilidad con el frontend
-                "away": away_team, # Para compatibilidad con el frontend
-                "competition": event.get("name", league_name),
-                "kickoff_local": event.get("date"),
             })
+            # Límite de partidos a 8 (puedes ajustar a 5 si quieres menos)
             if len(matches) >= 8: break
 
-    return {"matches": matches, "count": len(matches), "source": f"ESPN {SPORT.upper()} {LEAGUE.upper()}"}
+    return {"matches": matches, "count": len(matches), "source": f"ESPN {SPORT.upper()} {LEAGUE.upper()} ({date})"}
 
 
 # --------------------------------------------------------------------------------------
@@ -508,13 +500,13 @@ def predict_sync(inp: PredictIn) -> PredictOut:
         cache_set(key, base)
     return PredictOut(league=inp.league, home_team=home, away_team=away, probs=base["probs"], poisson=base["poisson"], averages=base["averages"], best_pick=base["best_pick"], summary=base["summary"], debug=base.get("debug") if (inp.expert or EXPOSE_DEBUG) else None,)
 
-def _recent_form_snippet(store: "LeagueStore", home: str, away: str, n: int = 6) -> str: return "" # Placeholder
+def _recent_form_snippet(store: "LeagueStore", home: str, away: str, n: int = 6) -> str: return ""
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3))
 def _call_openai_structured(model: str, temperature: float, schema: dict, messages: list[dict]):
     return _openai_client.chat.completions.create(model=model, temperature=temperature, response_format={"type": "json_object"}, messages=messages, max_tokens=800,)
 
-# IABoot Helpers
+# IABoot Helpers (se mantienen igual)
 def _norm_text(s: str) -> str: return re.sub(r"\s+", " ", (s or "")).strip().lower()
 def _canon_market_selection(market_raw: str, selection_raw: str, home_name: str, away_name: str):
     m, s, hn, an = _norm_text(market_raw), _norm_text(selection_raw), _norm_text(home_name), _norm_text(away_name)
@@ -532,7 +524,7 @@ def _canon_market_selection(market_raw: str, selection_raw: str, home_name: str,
     def has_under25(t): return "under 2.5" in t or "menos de 2.5" in t or "u2.5" in t
     if has_over25(m) or has_over25(s): return ("Over 2.5","Sí","Over 2.5","Más de 2.5")
     if has_under25(m) or has_under25(s): return ("UNDER_2_5","Sí","Under 2.5","Menos de 2.5")
-    return ("BTTS","Sí","BTTS","Sí") # Fallback
+    return ("BTTS","Sí","BTTS","Sí")
 def _iaboot_schema() -> dict:
     return {"name": "iaboot_schema", "schema": {"type": "object", "properties": {"match":  {"type": "string"}, "league": {"type": "string"}, "summary":{"type": "string"}, "picks": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "object", "properties": {"market": {"type": "string", "enum": ["1X2", "Over 2.5", "UNDER_2_5", "BTTS"]}, "selection": {"type": "string", "enum": ["1","X","2","Sí","No"]}, "prob_pct":  {"type": "number", "minimum": 0, "maximum": 100}, "confidence": {"type": "number", "minimum": 0, "maximum": 100}, "rationale":  {"type": "string"}}, "required": ["market","selection","prob_pct","confidence"]}}}, "required": ["picks","match","league"]}}
 def _iaboot_messages(pred: PredictOut, odds: dict | None, form_text: str) -> tuple[str, str]:
@@ -566,12 +558,10 @@ def predict_endpoint(inp: PredictIn, request: Request, premium_key_hdr: Optional
 
 @app.get("/premium/status", response_model=PremiumStatusOut)
 def premium_status(premium_key: Optional[str] = None, request: Request = None, premium_key_hdr: Optional[str] = Header(default=None, alias="X-Premium-Key"),):
-    # Ya que la lógica de pagos fue eliminada, asumimos que el servicio es Free/Activo
     return PremiumStatusOut(active=True, plan="free", status="active")
 
 @app.get("/top-matches")
 def top_matches(date: str | None = Query(default=None)):
-    """Obtiene los partidos principales (integración real de ESPN)."""
     try:
         return top_matches_payload(date)
     except Exception as e:
@@ -675,13 +665,11 @@ def iaboot_predict(inp: PredictIn, request: Request):
     sys, user = _iaboot_messages(pred, inp.odds, form_text); schema = _iaboot_schema()
     try: resp = _call_openai_structured(model=IABOOT_MODEL, temperature=IABOOT_TEMPERATURE, schema=schema, messages=[{"role":"system","content":sys}, {"role":"user","content":str(user)}],)
     except Exception as e:
-        print(f"OPENAI API CALL FAILED: {type(e).__name__}: {e}", file=sys.stderr)
         return IABootOut(match=f"{pred.home_team} vs {pred.away_team}", league=pred.league, summary="Servicio IA no disponible. Se muestra el mejor pick del modelo base.", picks=[IABootLeg(market=pred.best_pick.market, selection=("Gana local" if pred.best_pick.selection=="1" else "Gana visitante" if pred.best_pick.selection=="2" else "Empate" if pred.best_pick.selection=="X" else pred.best_pick.selection), prob_pct=pred.best_pick.prob_pct, confidence=pred.best_pick.confidence, rationale="Basado en Poisson calibrado y blend con mercado.",)],)
     txt = ""
     if resp.choices and resp.choices[0].message.content: txt = resp.choices[0].message.content
     try: payload = json.loads(txt)
     except Exception as e:
-        print(f"ERROR PARSING AI JSON: {e}. Raw text: {txt[:200]}...", file=sys.stderr)
         raise ValueError("AI returned non-parseable JSON.")
     home_name, away_name = pred.home_team, pred.away_team; picks = []
     for p in (payload.get("picks") or []):

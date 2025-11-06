@@ -1,4 +1,4 @@
-// App.tsx (Frontend Limpio - Sin Lógica de Pagos ni UI Premium)
+// App.tsx (Frontend Completo - SIN PAGOS - compatible con ESPN Mañana)
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import IntroModal from "./components/IntroModal";
@@ -54,8 +54,6 @@ type PredictResponse = {
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
-// ELIMINADAS: SubscriptionState, planFromPriceId, LABEL_WEEKLY/MONTHLY/YEARLY
-
 /* ===== Config (entorno) ===== */
 const API_BASE: string =
   (typeof window !== "undefined" && (window as any).__API_BASE__) ||
@@ -71,9 +69,8 @@ const toFloat = (v: unknown) => {
 };
 
 const pct = (n?: number) => (n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`);
-// ELIMINADA: classNames (no se usaba)
 
-/** Guarda estado en localStorage con SSR-safe. (Mantenido por si es útil) */
+/** Guarda estado en localStorage con SSR-safe. */
 function useLocalStorageState<T>(key: string, initial: T) {
   const [val, setVal] = useState<T>(() => {
     try {
@@ -92,7 +89,7 @@ function useLocalStorageState<T>(key: string, initial: T) {
   return [val, setVal] as const;
 }
 
-/** Fetch JSON tipado con AbortController. ELIMINADO EL premiumKey de opts. */
+/** Fetch JSON tipado con AbortController. SIN premiumKey. */
 async function fetchJSON<T>(url: string, opts: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), 20_000);
@@ -113,7 +110,7 @@ async function fetchJSON<T>(url: string, opts: RequestInit = {}): Promise<T> {
   }
 }
 
-/** Mapea best_pick -> odd ingresada por usuario. (Sin cambios) */
+/** Mapea best_pick -> odd ingresada por usuario. */
 function oddFromBestPick(best: PredictResponse["best_pick"], odds: Odds): number | undefined {
   const market = best.market;
   const sel = best.selection;
@@ -218,8 +215,6 @@ function Header({
         <button onClick={onOpenIABoot} title="IA Boot" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,.12)", color: "#d1d5db", background: "rgba(255,255,255,.06)" }}>
           🤖 IA Boot
         </button>
-
-        {/* ELIMINADO: {premiumSlot} */}
       </div>
     </div>
   );
@@ -293,8 +288,6 @@ function SkeletonCard() {
   );
 }
 
-// ELIMINADAS: PlanCard, PlansModal (Lógica de planes y pagos eliminada)
-
 // --- APP PRINCIPAL ---
 export default function App() {
   // ⚙️ Estado
@@ -310,15 +303,13 @@ export default function App() {
   const [data, setData] = useState<PredictResponse | null>(null);
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
-  // ELIMINADO: [plansOpen, setPlansOpen]
   const [topOpen, setTopOpen] = useState(false);
-  const [topLoading, setLoadingTop] = useState(false); // Renombrado a setLoadingTop
+  const [topLoading, setLoadingTop] = useState(false);
   const [topErr, setTopErr] = useState("");
   const [topMatches, setTopMatches] = useState<any[]>([]);
 
-  // ELIMINADO: [premiumKey, setPremiumKey] (Solo se mantiene una clave vacía como placeholder si se requiere)
-  const premiumKey = '';
-  // ELIMINADO: [sub, setSub] (Ahora el servicio es Free por defecto)
+  // Servicio Free/Activo
+  const premiumKey = ''; 
   const [introOpen, setIntroOpen] = useState(!localStorage.getItem("fm_intro_seen"));
 
   const [parlayOpen, setParlayOpen] = useState(false);
@@ -330,23 +321,20 @@ export default function App() {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  // ELIMINADO: startCheckout, openPortal (Lógica de pagos)
-
-  // Función para cerrar modal Intro (sin lógica premium)
-  const goFree = useCallback(() => {
+  // Función para cerrar modal Intro
+  const closeIntro = useCallback(() => {
     setIntroOpen(false);
     localStorage.setItem("fm_intro_seen", "1");
   }, []);
 
-  // Cargar 8 partidos TOP desde backend (/top-matches).
-  async function loadTopMatches() {
-    // ELIMINADO EL GATEO PREMIUM: if (!isPremiumUI) { setPlansOpen(true); return; }
 
+  // Cargar 8 partidos TOP de MAÑANA desde backend (/top-matches).
+  async function loadTopMatches() {
     setTopErr("");
     setLoadingTop(true);
     setTopMatches([]);
     try {
-      // Se llama a la API sin el premiumKey en los headers
+      // Llama sin fecha, el backend usa MAÑANA por defecto y retorna hasta 8.
       const j = await fetchJSON<{ matches?: any[] }>(`${API_BASE}/top-matches`, { method: "GET" }); 
       const matches = Array.isArray(j?.matches) ? j.matches : [];
       setTopMatches(matches);
@@ -359,8 +347,6 @@ export default function App() {
     }
   }
 
-
-  // ELIMINADOS: useEffects de validación de clave, canjeo de Stripe, y welcome.
 
   // Cargar ligas
   useEffect(() => {
@@ -415,7 +401,6 @@ export default function App() {
 
       const json = await fetchJSON<PredictResponse>(`${API_BASE}/predict`, {
         method: "POST", body: JSON.stringify(body),
-        // Ya no se pasa premiumKey en headers, ya que el endpoint es 100% público
       });
       if (!mounted.current) return;
       setData(json);
@@ -455,7 +440,7 @@ export default function App() {
     return { prob01, odd, humanMarket, humanSelection, matchLabel };
   }, [data, odds]);
 
-  // isPremiumUI siempre es true ahora que el servicio es gratuito
+  // isPremiumUI siempre es true
   const isPremiumUI = true; 
 
   return (
@@ -484,13 +469,12 @@ export default function App() {
           onOpenParlay={() => setParlayOpen(true)}
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenIABoot={() => setIaOpen(true)}
-          // ELIMINADO: premiumSlot
         />
 
         <IntroModal
           open={!!introOpen}
-          onClose={() => { setIntroOpen(false); localStorage.setItem("fm_intro_seen", "1"); }}
-          onGoPremium={goFree} // Ahora es goFree
+          onClose={closeIntro}
+          onGoPremium={closeIntro}
         />
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
@@ -510,13 +494,13 @@ export default function App() {
             <div style={pill}>2️⃣ (Opcional) Ingresar cuotas</div>
             <div style={pill}>3️⃣ Calcular</div>
           </div>
-            {/* Botón Sugeridos (GPT) - Ahora completamente funcional y sin gateo */}
+            {/* Botón Partidos de MAÑANA */}
             <button
               onClick={loadTopMatches}
               style={{ ...pill, cursor: "pointer", borderColor: "#7c3aed", fontWeight: 800 }}
-              title="Obtener partidos top con cuotas de ESPN"
+              title="Obtener partidos de mañana con cuotas de ESPN"
             >
-              🧠 Sugeridos (ESPN Live)
+              🧠 Partidos de MAÑANA
             </button>
 
           <div className="g3" style={{ marginTop: 12 }}>
@@ -601,7 +585,6 @@ export default function App() {
                   const body: any = { league, home_team: home, away_team: away };
                   if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
                   try {
-                    // Endpoint sin restricción Premium
                     await fetchJSON(`${API_BASE}/alerts/value-pick`, { method: "POST", body: JSON.stringify(body) }); 
                     alert("Enviado (si cumple umbrales).");
                   } catch (e: any) {
@@ -635,7 +618,7 @@ export default function App() {
           />
         )}
 
-        {/* Modal: Top Matches (GPT) - Ahora muestra datos de ESPN */}
+        {/* Modal: Top Matches (ESPN Live - MAÑANA) */}
         {topOpen && (
           <div
             role="dialog"
@@ -652,7 +635,7 @@ export default function App() {
               border: "1px solid rgba(255,255,255,.12)", borderRadius: 16, padding: 16
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <div style={{ fontSize: 20, fontWeight: 900 }}>🧠 Partidos sugeridos (ESPN Live)</div>
+                <div style={{ fontSize: 20, fontWeight: 900 }}>🧠 Partidos sugeridos (ESPN Live - MAÑANA)</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <div style={{ ...pill, opacity: 0.9 }}>Servicio Activo</div>
                   <button onClick={() => setTopOpen(false)} style={{ ...pill, cursor: "pointer" }}>Cerrar ✕</button>
@@ -668,8 +651,8 @@ export default function App() {
                   {topMatches.map((m: any, i: number) => (
                     <div key={i} style={{ border: "1px solid rgba(255,255,255,.06)", borderRadius: 12, padding: 12 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        {/* Usamos home_team y away_team que vienen del backend de ESPN */}
                         <div style={{ fontWeight: 900 }}>{m.home_team} vs {m.away_team}</div> 
+                        {/* Muestra la fecha/hora de mañana */}
                         <div style={{ opacity: 0.85, fontSize: 12 }}>{m.league} · {new Date(m.date).toLocaleString()}</div>
                       </div>
                       
