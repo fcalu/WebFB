@@ -1,3 +1,5 @@
+// App.tsx (Frontend Limpio - Sin Lógica de Pagos ni UI Premium)
+
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import IntroModal from "./components/IntroModal";
 
@@ -52,28 +54,7 @@ type PredictResponse = {
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
-type SubscriptionState = {
-  active: boolean;
-  status?: string | null;
-  plan?: string | null;
-  price_id?: string | null;
-  current_period_end?: number | null;
-  premium_key?: string | null;
-  email?: string | null;
-};
-
-function planFromPriceId(price?: string | null) {
-  if (!price) return null;
-  const p = String(price).toLowerCase();
-  if (p.includes("week") || p.includes("semana")) return "Semanal";
-  if (p.includes("month") || p.includes("mensual")) return "Mensual";
-  if (p.includes("year") || p.includes("anual")) return "Anual";
-  return null;
-}
-
-const LABEL_WEEKLY  = (import.meta as any).env?.VITE_PRICE_WEEKLY_LABEL  ?? "Semanal   $70.00";
-const LABEL_MONTHLY = (import.meta as any).env?.VITE_PRICE_MONTHLY_LABEL ?? "Mensual   $130.00";
-const LABEL_YEARLY  = (import.meta as any).env?.VITE_PRICE_YEARLY_LABEL  ?? "Anual     $1199.00";
+// ELIMINADAS: SubscriptionState, planFromPriceId, LABEL_WEEKLY/MONTHLY/YEARLY
 
 /* ===== Config (entorno) ===== */
 const API_BASE: string =
@@ -90,11 +71,9 @@ const toFloat = (v: unknown) => {
 };
 
 const pct = (n?: number) => (n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`);
-function classNames(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
+// ELIMINADA: classNames (no se usaba)
 
-/** Guarda estado en localStorage con SSR-safe. */
+/** Guarda estado en localStorage con SSR-safe. (Mantenido por si es útil) */
 function useLocalStorageState<T>(key: string, initial: T) {
   const [val, setVal] = useState<T>(() => {
     try {
@@ -113,8 +92,8 @@ function useLocalStorageState<T>(key: string, initial: T) {
   return [val, setVal] as const;
 }
 
-/** Fetch JSON tipado con AbortController. Adjunta Premium-Key si existe. */
-async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: string } = {}): Promise<T> {
+/** Fetch JSON tipado con AbortController. ELIMINADO EL premiumKey de opts. */
+async function fetchJSON<T>(url: string, opts: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), 20_000);
   try {
@@ -122,7 +101,6 @@ async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: stri
       "Content-Type": "application/json",
       ...(opts.headers || {}),
     };
-    if ((opts as any).premiumKey) (headers as Record<string, string>)["X-Premium-Key"] = (opts as any).premiumKey;
 
     const res = await fetch(url, { ...opts, headers, signal: controller.signal });
     if (!res.ok) {
@@ -135,7 +113,7 @@ async function fetchJSON<T>(url: string, opts: RequestInit & { premiumKey?: stri
   }
 }
 
-/** Mapea best_pick -> odd ingresada por usuario. */
+/** Mapea best_pick -> odd ingresada por usuario. (Sin cambios) */
 function oddFromBestPick(best: PredictResponse["best_pick"], odds: Odds): number | undefined {
   const market = best.market;
   const sel = best.selection;
@@ -152,7 +130,7 @@ function oddFromBestPick(best: PredictResponse["best_pick"], odds: Odds): number
   return undefined;
 }
 
-/* ===== Estilos base (dark) ===== */
+/* ===== Estilos base (dark) (Sin cambios) ===== */
 const page: React.CSSProperties = {
   minHeight: "100vh",
   background:
@@ -183,16 +161,15 @@ const pill: React.CSSProperties = {
   background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.10)", color: "#d1d5db", fontSize: 12, whiteSpace: "nowrap",
 };
 
-/* ===== Cabecera ===== */
+/* ===== Cabecera (Simplificada) ===== */
 function Header({
-  onOpenMenu, onOpenHistory, onOpenParlay, onOpenBuilder, onOpenIABoot, premiumSlot,
+  onOpenMenu, onOpenHistory, onOpenParlay, onOpenBuilder, onOpenIABoot,
 }: {
   onOpenMenu: () => void;
   onOpenHistory: () => void;
   onOpenParlay: () => void;
   onOpenBuilder: () => void;
   onOpenIABoot: () => void;
-  premiumSlot?: React.ReactNode;
 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", marginBottom: 12 }}>
@@ -242,14 +219,13 @@ function Header({
           🤖 IA Boot
         </button>
 
-        {/* 👑 Premium compacto */}
-        {premiumSlot}
+        {/* ELIMINADO: {premiumSlot} */}
       </div>
     </div>
   );
 }
 
-/* ===== Editor de cuotas ===== */
+/* ===== Editor de cuotas (Sin cambios) ===== */
 function OddsEditor({
   odds, setOdds, rawOdds, setRawOdds,
 }: { odds: Odds; setOdds: (o: Odds) => void; rawOdds: RawOdds; setRawOdds: (o: RawOdds) => void; }) {
@@ -295,7 +271,7 @@ function OddsEditor({
   );
 }
 
-/* ===== Skeleton simple ===== */
+/* ===== Skeleton simple (Sin cambios) ===== */
 function SkeletonCard() {
   const sk = {
     background: "linear-gradient(90deg,#1f2937 0px,#111827 40px,#1f2937 80px)",
@@ -317,124 +293,7 @@ function SkeletonCard() {
   );
 }
 
-/* ====== Popup de Planes ====== */
-type PlanKey = "weekly" | "monthly" | "annual";
-
-function PlanCard({
-  label, priceLabel, bullets, onClick, disabled
-}: {
-  label: string; priceLabel: string; bullets: string[];
-  onClick: () => void; disabled?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        border: "1px solid rgba(255,255,255,.12)",
-        background: "rgba(255,255,255,.04)",
-        borderRadius: 16, padding: 16,
-        display: "flex", flexDirection: "column", gap: 10, minHeight: 210
-      }}
-    >
-      <div style={{ fontSize: 18, fontWeight: 900 }}>{label}</div>
-      <div style={{ opacity: 0.9 }}>{priceLabel}</div>
-      <ul style={{ margin: 0, paddingInlineStart: 18, lineHeight: 1.5 }}>
-        {bullets.map((b, i) => <li key={i} style={{ opacity: 0.9 }}>{b}</li>)}
-      </ul>
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        style={{
-          marginTop: "auto", padding: "12px 14px",
-          borderRadius: 12, border: "none", fontWeight: 900,
-          cursor: disabled ? "not-allowed" : "pointer",
-          background: "linear-gradient(135deg,#8b5cf6,#6d28d9)", color: "white"
-        }}
-        title="Ir a Stripe"
-      >
-        {disabled ? "Abriendo…" : "Empezar"}
-      </button>
-    </div>
-  );
-}
-
-function PlansModal({
-  open, onClose, onChoose
-}: {
-  open: boolean; onClose: () => void;
-  onChoose: (plan: PlanKey) => void;
-}) {
-  if (!open) return null;
-  return (
-    <div
-      role="dialog" aria-modal="true"
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, zIndex: 80,
-        display: "grid", placeItems: "center",
-        background: "rgba(0,0,0,.55)", padding: 16
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(920px, 96vw)",
-          background: "linear-gradient(180deg,#0f172a 0%, #0b1020 100%)",
-          border: "1px solid rgba(255,255,255,.12)",
-          borderRadius: 18, padding: 18, color: "#e5e7eb",
-          boxShadow: "0 20px 70px rgba(0,0,0,.45)"
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ fontSize: 22, fontWeight: 900 }}>Planes Premium</div>
-          <button
-            onClick={onClose}
-            style={{
-              background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.12)",
-              color: "#e5e7eb", borderRadius: 10, padding: "8px 12px", cursor: "pointer"
-            }}
-          >
-            Cerrar ✕
-          </button>
-        </div>
-
-        <div
-          style={{
-            marginBottom: 14,
-            background: "rgba(124,58,237,.12)",
-            border: "1px solid rgba(124,58,237,.35)",
-            borderRadius: 12, padding: 12, fontSize: 14
-          }}
-        >
-          Desbloquea <b>Generador de Selección</b>, <b>Parlay inteligente</b> e
-          <b> IA Boot</b>, además de <b>blend con cuotas</b> y <b>soporte prioritario</b>.
-          Cancela cuando quieras.
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 12 }}>
-          <PlanCard
-            label="Semanal" priceLabel={LABEL_WEEKLY}
-            bullets={["Ideal para probar funciones Pro.", "Incluye todos los módulos.", "Renovable semanalmente."]}
-            onClick={() => onChoose("weekly")}
-          />
-          <PlanCard
-            label="Mensual" priceLabel={LABEL_MONTHLY}
-            bullets={["Uso continuo y soporte prioritario.", "Mejor relación funciones/precio.", "Renovable mensualmente."]}
-            onClick={() => onChoose("monthly")}
-          />
-          <PlanCard
-            label="Anual" priceLabel={LABEL_YEARLY}
-            bullets={["Mejor precio por mes.", "Acceso estable toda la temporada.", "Incluye todo lo de Mensual."]}
-            onClick={() => onChoose("annual")}
-          />
-        </div>
-
-        <div style={{ marginTop: 14, fontSize: 12, opacity: 0.8 }}>
-          * Uso educativo/informativo. No constituye asesoría financiera ni garantiza resultados.
-        </div>
-      </div>
-    </div>
-  );
-}
+// ELIMINADAS: PlanCard, PlansModal (Lógica de planes y pagos eliminada)
 
 // --- APP PRINCIPAL ---
 export default function App() {
@@ -451,14 +310,15 @@ export default function App() {
   const [data, setData] = useState<PredictResponse | null>(null);
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
-  const [plansOpen, setPlansOpen] = useState(false);
+  // ELIMINADO: [plansOpen, setPlansOpen]
   const [topOpen, setTopOpen] = useState(false);
-  const [topLoading, setTopLoading] = useState(false);
+  const [topLoading, setLoadingTop] = useState(false); // Renombrado a setLoadingTop
   const [topErr, setTopErr] = useState("");
   const [topMatches, setTopMatches] = useState<any[]>([]);
 
-  const [premiumKey, setPremiumKey] = useLocalStorageState<string>("fm_premium_key", "");
-  const [sub, setSub] = useState<SubscriptionState>({ active: false, premium_key: null });
+  // ELIMINADO: [premiumKey, setPremiumKey] (Solo se mantiene una clave vacía como placeholder si se requiere)
+  const premiumKey = '';
+  // ELIMINADO: [sub, setSub] (Ahora el servicio es Free por defecto)
   const [introOpen, setIntroOpen] = useState(!localStorage.getItem("fm_intro_seen"));
 
   const [parlayOpen, setParlayOpen] = useState(false);
@@ -470,56 +330,24 @@ export default function App() {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  /* === Checkout compacto y portal === */
-  const startCheckout = useCallback(
-    async (plan: PlanKey = "monthly") => {
-      try {
-        const j = await fetchJSON<{ provider: string; url: string }>(`${API_BASE}/billing/checkout`, {
-          method: "POST",
-          body: JSON.stringify({ plan, method: "card", user_email: null }),
-          premiumKey,
-        });
-        if (j?.url) window.location.href = j.url;
-      } catch (e: any) {
-        alert(e?.message || "No se pudo iniciar el pago.");
-      }
-    },
-    [premiumKey]
-  );
+  // ELIMINADO: startCheckout, openPortal (Lógica de pagos)
 
-  const openPortal = useCallback(async () => {
-    try {
-      const j = await fetchJSON<{ url: string }>(`${API_BASE}/create-billing-portal`, {
-        method: "POST",
-        body: JSON.stringify({ premium_key: premiumKey }),
-        premiumKey,
-      });
-      if (j?.url) window.location.href = j.url;
-    } catch (e: any) {
-      alert(e?.message || "No se pudo abrir el portal.");
-    }
-  }, [premiumKey]);
-
-  // abre Premium desde Intro (sin modal)
-  const goPremium = useCallback(() => {
+  // Función para cerrar modal Intro (sin lógica premium)
+  const goFree = useCallback(() => {
     setIntroOpen(false);
     localStorage.setItem("fm_intro_seen", "1");
-    startCheckout("monthly");
-  }, [startCheckout]);
+  }, []);
 
-    // Cargar 8 partidos TOP desde backend (/top-matches).
+  // Cargar 8 partidos TOP desde backend (/top-matches).
   async function loadTopMatches() {
-    // Si no es premium, abrir modal de planes
-    if (!isPremiumUI) {
-      setPlansOpen(true);
-      return;
-    }
+    // ELIMINADO EL GATEO PREMIUM: if (!isPremiumUI) { setPlansOpen(true); return; }
 
     setTopErr("");
-    setTopLoading(true);
+    setLoadingTop(true);
     setTopMatches([]);
     try {
-      const j = await fetchJSON<{ matches?: any[] }>(`${API_BASE}/top-matches`, { method: "GET", premiumKey });
+      // Se llama a la API sin el premiumKey en los headers
+      const j = await fetchJSON<{ matches?: any[] }>(`${API_BASE}/top-matches`, { method: "GET" }); 
       const matches = Array.isArray(j?.matches) ? j.matches : [];
       setTopMatches(matches);
       setTopOpen(true);
@@ -527,140 +355,19 @@ export default function App() {
       setTopErr(e?.message || "No pude cargar partidos sugeridos.");
       setTopOpen(true);
     } finally {
-      setTopLoading(false);
+      setLoadingTop(false);
     }
   }
 
 
-  /* ✅ VALIDAR CLAVE GUARDADA AL ARRANCAR */
-  useEffect(() => {
-    const k = localStorage.getItem("fm_premium_key") || "";
-    setPremiumKey(k);
-
-    if (!k) {
-      setSub({ active: false, premium_key: null });
-      return;
-    }
-
-    (async () => {
-      try {
-        const r = await fetch(`${API_BASE}/premium/status`, { headers: { "X-Premium-Key": k } });
-        if (!r.ok) throw new Error(await r.text());
-        const j = await r.json();
-
-        const active = !!(j.active || j.status === "active" || j.status === "trialing");
-        const next: SubscriptionState = {
-          active,
-          status: j?.status ?? null,
-          plan: j?.plan ?? planFromPriceId(j?.price_id),
-          price_id: j?.price_id ?? null,
-          current_period_end: j?.current_period_end ?? null,
-          premium_key: k,
-          email: j?.email ?? null,
-        };
-
-        setSub(next);
-
-        if (!active) {
-          localStorage.removeItem("fm_premium_key");
-          setPremiumKey("");
-        }
-      } catch {
-        localStorage.removeItem("fm_premium_key");
-        setPremiumKey("");
-        setSub({ active: false, premium_key: null });
-      }
-    })();
-  }, [API_BASE, setPremiumKey]);
-
-  /* 🔁 Refrescar estado cuando cambia premiumKey */
-  useEffect(() => {
-    if (!premiumKey) return;
-    let cancel = false;
-    (async () => {
-      try {
-        const r = await fetch(`${API_BASE}/premium/status`, { headers: { "X-Premium-Key": premiumKey } });
-        if (!r.ok) return;
-        const j = await r.json();
-        if (cancel) return;
-        setSub({
-          active: !!(j.active || j.status === "active" || j.status === "trialing"),
-          status: j?.status ?? null,
-          plan: j?.plan ?? planFromPriceId(j?.price_id),
-          price_id: j?.price_id ?? null,
-          current_period_end: j?.current_period_end ?? null,
-          premium_key: premiumKey,
-          email: j?.email ?? null,
-        });
-      } catch {}
-    })();
-    return () => { cancel = true; };
-  }, [premiumKey]);
-
-  const redeemHandledRef = useRef(false);
-  /** 🔁 Canjeo de sesión Stripe (?success/&session_id) */
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    const success = url.searchParams.get("success");
-    const sessionId = url.searchParams.get("session_id");
-    const canceled = url.searchParams.get("canceled");
-
-    if (redeemHandledRef.current) return;
-
-    if (canceled === "true") {
-      window.history.replaceState(null, "", window.location.pathname);
-      redeemHandledRef.current = true;
-      return;
-    }
-
-    if (success === "true" && sessionId) {
-      const already = sessionStorage.getItem("fm_redeem_sid");
-      if (already === sessionId) {
-        window.history.replaceState(null, "", window.location.pathname);
-        redeemHandledRef.current = true;
-        return;
-      }
-
-      window.history.replaceState(null, "", window.location.pathname);
-
-      (async () => {
-        try {
-          type RedeemResp = { premium_key?: string; status?: string; current_period_end?: number };
-          const j = await fetchJSON<RedeemResp>(`${API_BASE}/stripe/redeem?session_id=${encodeURIComponent(sessionId)}`);
-          if (j?.premium_key) {
-            setPremiumKey(j.premium_key);
-            if (j.current_period_end) localStorage.setItem("fm_premium_cpe", String(j.current_period_end));
-            sessionStorage.setItem("fm_redeem_sid", sessionId);
-          } else {
-            alert("Pago correcto, pero no se pudo recuperar la clave. Contacta soporte.");
-          }
-        } catch (e: any) {
-          alert(e?.message || "No se pudo canjear la sesión de Stripe.");
-        } finally {
-          redeemHandledRef.current = true;
-        }
-      })();
-    }
-  }, [setPremiumKey]);
-
-  /* 🎉 “Premium activado” UNA sola vez */
-  const prevActiveRef = useRef<boolean>(false);
-  useEffect(() => {
-    if (sub.active && !prevActiveRef.current) {
-      prevActiveRef.current = true;
-      if (!sessionStorage.getItem("fm_premium_welcome_shown")) {
-        sessionStorage.setItem("fm_premium_welcome_shown", "1");
-        alert("¡Premium activado!");
-      }
-    }
-  }, [sub.active]);
+  // ELIMINADOS: useEffects de validación de clave, canjeo de Stripe, y welcome.
 
   // Cargar ligas
   useEffect(() => {
     const controller = new AbortController();
     (async () => {
       try {
-        const d = await fetchJSON<ApiLeagues>(`${API_BASE}/leagues`, { signal: controller.signal as any, premiumKey });
+        const d = await fetchJSON<ApiLeagues>(`${API_BASE}/leagues`, { signal: controller.signal as any });
         if (!mounted.current) return;
         setLeagues(d.leagues ?? []);
       } catch (e) {
@@ -669,7 +376,7 @@ export default function App() {
       }
     })();
     return () => controller.abort();
-  }, [premiumKey]);
+  }, []);
 
   // Cargar equipos por liga
   useEffect(() => {
@@ -680,7 +387,7 @@ export default function App() {
     (async () => {
       try {
         const d = await fetchJSON<ApiTeams>(`${API_BASE}/teams?league=${encodeURIComponent(league)}`, {
-          signal: controller.signal as any, premiumKey,
+          signal: controller.signal as any,
         });
         if (!mounted.current) return;
         setTeams(d.teams ?? []);
@@ -690,7 +397,7 @@ export default function App() {
       }
     })();
     return () => controller.abort();
-  }, [league, premiumKey]);
+  }, [league]);
 
   const canPredict = league && home && away && home !== away;
 
@@ -707,7 +414,8 @@ export default function App() {
       if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
 
       const json = await fetchJSON<PredictResponse>(`${API_BASE}/predict`, {
-        method: "POST", body: JSON.stringify(body), premiumKey,
+        method: "POST", body: JSON.stringify(body),
+        // Ya no se pasa premiumKey en headers, ya que el endpoint es 100% público
       });
       if (!mounted.current) return;
       setData(json);
@@ -722,7 +430,6 @@ export default function App() {
             market: json.best_pick.market, selection: json.best_pick.selection,
             prob_pct: json.best_pick.prob_pct, odd, stake: null,
           }),
-          premiumKey,
         });
       } catch {}
     } catch (e: any) {
@@ -748,7 +455,8 @@ export default function App() {
     return { prob01, odd, humanMarket, humanSelection, matchLabel };
   }, [data, odds]);
 
-  const isPremiumUI = sub.active === true;
+  // isPremiumUI siempre es true ahora que el servicio es gratuito
+  const isPremiumUI = true; 
 
   return (
     <div style={page}>
@@ -776,45 +484,13 @@ export default function App() {
           onOpenParlay={() => setParlayOpen(true)}
           onOpenBuilder={() => setBuilderOpen(true)}
           onOpenIABoot={() => setIaOpen(true)}
-          premiumSlot={
-            <div style={{ display: "flex", gap: 8 }}>
-              {isPremiumUI ? (
-                <button
-                  onClick={openPortal}
-                  title="Gestionar suscripción"
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 8,
-                    padding: "10px 14px", borderRadius: 12,
-                    border: "1px solid rgba(34,197,94,.45)",
-                    color: "#d1fae5", background: "rgba(34,197,94,.12)", fontWeight: 800
-                  }}
-                >
-                  👑 Gestionar
-                </button>
-              ) : (
-                <button
-                  onClick={() => setPlansOpen(true)}
-                  title="Activar Premium"
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 8,
-                    padding: "10px 14px", borderRadius: 12,
-                    border: "1px solid rgba(124,58,237,.5)",
-                    color: "white",
-                    background: "linear-gradient(135deg,#7c3aed,#5b21b6)",
-                    fontWeight: 900
-                  }}
-                >
-                  👑 Premium
-                </button>
-              )}
-            </div>
-          }
+          // ELIMINADO: premiumSlot
         />
 
         <IntroModal
           open={!!introOpen}
           onClose={() => { setIntroOpen(false); localStorage.setItem("fm_intro_seen", "1"); }}
-          onGoPremium={goPremium}
+          onGoPremium={goFree} // Ahora es goFree
         />
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
@@ -822,8 +498,8 @@ export default function App() {
             <input type="checkbox" checked={expert} onChange={(e) => setExpert(e.target.checked)} />
             &nbsp;Modo experto (ver detalles POISSON/DC)
           </label>
-          <div style={{ ...pill, borderColor: isPremiumUI ? "#22c55e" : "rgba(255,255,255,.1)" }}>
-            {isPremiumUI ? `✅ Premium activo${sub.plan ? " · " + sub.plan : ""}` : "🔒 Modo gratis"}
+          <div style={{ ...pill, borderColor: "#22c55e" }}>
+            ✅ Servicio activo (100% Funcional)
           </div>
         </div>
 
@@ -834,13 +510,13 @@ export default function App() {
             <div style={pill}>2️⃣ (Opcional) Ingresar cuotas</div>
             <div style={pill}>3️⃣ Calcular</div>
           </div>
-           {/* Botón Sugeridos (GPT) */}
+            {/* Botón Sugeridos (GPT) - Ahora completamente funcional y sin gateo */}
             <button
               onClick={loadTopMatches}
               style={{ ...pill, cursor: "pointer", borderColor: "#7c3aed", fontWeight: 800 }}
-              title="Sugeridos por GPT (8 partidos top)"
+              title="Obtener partidos top con cuotas de ESPN"
             >
-              🧠 Sugeridos (GPT)
+              🧠 Sugeridos (ESPN Live)
             </button>
 
           <div className="g3" style={{ marginTop: 12 }}>
@@ -894,7 +570,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Drawers */}
+        {/* Drawers (Todos desbloqueados) */}
         <NavDrawer open={navOpen} onClose={() => setNavOpen(false)} onOpenParlay={() => setParlayOpen(true)} onOpenBuilder={() => setBuilderOpen(true)} onOpenHistory={() => setHistOpen(true)} />
 
         <ParlayDrawer open={parlayOpen} onClose={() => setParlayOpen(false)} API_BASE={API_BASE} isPremium={isPremiumUI} premiumKey={premiumKey} />
@@ -925,7 +601,8 @@ export default function App() {
                   const body: any = { league, home_team: home, away_team: away };
                   if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
                   try {
-                    await fetchJSON(`${API_BASE}/alerts/value-pick`, { method: "POST", body: JSON.stringify(body), premiumKey });
+                    // Endpoint sin restricción Premium
+                    await fetchJSON(`${API_BASE}/alerts/value-pick`, { method: "POST", body: JSON.stringify(body) }); 
                     alert("Enviado (si cumple umbrales).");
                   } catch (e: any) {
                     alert(e?.message || "No se pudo enviar la alerta.");
@@ -958,7 +635,7 @@ export default function App() {
           />
         )}
 
-                {/* Modal: Top Matches (GPT) */}
+        {/* Modal: Top Matches (GPT) - Ahora muestra datos de ESPN */}
         {topOpen && (
           <div
             role="dialog"
@@ -975,9 +652,9 @@ export default function App() {
               border: "1px solid rgba(255,255,255,.12)", borderRadius: 16, padding: 16
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <div style={{ fontSize: 20, fontWeight: 900 }}>🧠 Partidos sugeridos por GPT</div>
+                <div style={{ fontSize: 20, fontWeight: 900 }}>🧠 Partidos sugeridos (ESPN Live)</div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <div style={{ ...pill, opacity: 0.9 }}>{isPremiumUI ? "Premium" : "Gratis"}</div>
+                  <div style={{ ...pill, opacity: 0.9 }}>Servicio Activo</div>
                   <button onClick={() => setTopOpen(false)} style={{ ...pill, cursor: "pointer" }}>Cerrar ✕</button>
                 </div>
               </div>
@@ -987,49 +664,40 @@ export default function App() {
 
               {!topLoading && !topErr && (
                 <div style={{ display: "grid", gap: 12 }}>
-                  {topMatches.length === 0 && <div style={{ ...pill }}>No hay sugerencias disponibles.</div>}
+                  {topMatches.length === 0 && <div style={{ ...pill }}>No hay sugerencias disponibles para la liga por defecto.</div>}
                   {topMatches.map((m: any, i: number) => (
                     <div key={i} style={{ border: "1px solid rgba(255,255,255,.06)", borderRadius: 12, padding: 12 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <div style={{ fontWeight: 900 }}>{m.home} vs {m.away}</div>
-                        <div style={{ opacity: 0.85, fontSize: 12 }}>{m.competition} · {m.kickoff_local}</div>
+                        {/* Usamos home_team y away_team que vienen del backend de ESPN */}
+                        <div style={{ fontWeight: 900 }}>{m.home_team} vs {m.away_team}</div> 
+                        <div style={{ opacity: 0.85, fontSize: 12 }}>{m.league} · {new Date(m.date).toLocaleString()}</div>
                       </div>
-                      <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>{m.rationale}</div>
-
+                      
                       <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          {(m.sources || []).slice(0,3).map((u: string, k: number) => (
-                            <a key={k} href={u} target="_blank" rel="noreferrer" style={{ ...pill, fontSize: 11 }}>
-                              {new URL(u).hostname}
-                            </a>
-                          ))}
+                          {/* Mostrar cuotas disponibles */}
+                          {m.odds && m.odds["1"] && <span style={pill}>1: {m.odds["1"]}</span>}
+                          {m.odds && m.odds.X && <span style={pill}>X: {m.odds.X}</span>}
+                          {m.odds && m.odds["2"] && <span style={pill}>2: {m.odds["2"]}</span>}
+                          {m.odds && m.odds.O2_5 && <span style={pill}>O2.5: {m.odds.O2_5}</span>}
                         </div>
 
                         <div style={{ display: "flex", gap: 8 }}>
                           <button
                             onClick={() => {
-                              // Rellenar equipos + intentar ligar la competition con tu lista de leagues
-                              setHome(m.home || "");
-                              setAway(m.away || "");
-                              const guess = (m.competition || "").toLowerCase();
-                              const found = leagues.find((L) => L.toLowerCase().includes(guess));
-                              if (found) setLeague(found);
+                              // Rellenar equipos
+                              setHome(m.home_team || "");
+                              setAway(m.away_team || "");
+                              setLeague(m.league || "");
+                              // Rellenar cuotas obtenidas
+                              setOdds(m.odds || {});
+                              setRawOdds(m.odds ? Object.fromEntries(Object.entries(m.odds).map(([k, v]) => [k, String(v)])) : {});
                               setTopOpen(false);
                               window.scrollTo({ top: 0, behavior: "smooth" });
                             }}
                             style={{ ...pill, cursor: "pointer", fontWeight: 800, borderColor: "#7c3aed" }}
                           >
                             Usar partido
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              // Si no está premium y quieren abrir planes
-                              if (!isPremiumUI) setPlansOpen(true);
-                            }}
-                            style={{ ...pill, cursor: "pointer" }}
-                          >
-                            {isPremiumUI ? "Seleccionar" : "Ver planes"}
                           </button>
                         </div>
                       </div>
@@ -1040,16 +708,6 @@ export default function App() {
             </div>
           </div>
         )}
-
-        {/* Modal de Planes */}
-        <PlansModal
-          open={plansOpen}
-          onClose={() => setPlansOpen(false)}
-          onChoose={(plan) => {
-            setPlansOpen(false);
-            startCheckout(plan);
-          }}
-        />
       </div>
     </div>
   );
