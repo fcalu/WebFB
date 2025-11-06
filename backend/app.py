@@ -1,26 +1,25 @@
-# backend/app.py
+# backend/app.py (SIN LÓGICA DE PAGOS PREMIUM / STRIPE / PAYPAL)
 # === stdlib ===
 import os, sys, time, glob, math, re, secrets, sqlite3
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timezone, timedelta  # <-- timedelta si calculas periodos
+from datetime import datetime, timezone, timedelta
 
 # === terceros ===
 import numpy as np
 import pandas as pd
 from scipy.stats import poisson
-from fastapi import FastAPI, HTTPException, Request, Header   # <-- Header si lo usas
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, JSONResponse # <-- JSONResponse si lo usas
+from fastapi.responses import PlainTextResponse, JSONResponse
 from pydantic import BaseModel, Field
-import stripe
-import requests  # <-- PayPal por HTTP
+# import stripe # ELIMINADO
+import requests
+from top_matches import top_matches_payload # Asumiendo que esta función existe
 
 # === OpenAI / retry ===
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
 from fastapi import FastAPI, HTTPException, Query
-from top_matches import top_matches_payload
-
 
 # === sklearn (opcional) ===
 try:
@@ -30,18 +29,18 @@ except Exception:
     SKLEARN_OK = False
 
 
-# --- CONFIGURACIÓN GLOBAL Y SECRETA ---
-PREMIUM_KEY_SECRET = os.getenv("PREMIUM_ACCESS_KEY", "DEFAULT_DISABLED_KEY") 
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+# --- CONFIGURACIÓN GLOBAL ---
+# PREMIUM_KEY_SECRET = os.getenv("PREMIUM_ACCESS_KEY", "DEFAULT_DISABLED_KEY") # ELIMINADO
+# STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY") # ELIMINADO
 DOMAIN = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+# STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET") # ELIMINADO
 
-# Inicializa Stripe
-if STRIPE_SECRET_KEY:
-    stripe.api_key = STRIPE_SECRET_KEY
-else:
-    print("ADVERTENCIA: STRIPE_SECRET_KEY no está configurada. El checkout fallará.")
+# Inicializa Stripe # ELIMINADO
+# if STRIPE_SECRET_KEY:
+#     stripe.api_key = STRIPE_SECRET_KEY
+# else:
+#     print("ADVERTENCIA: STRIPE_SECRET_KEY no está configurada. El checkout fallará.")
 # --------------------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------------------
@@ -58,37 +57,35 @@ EXPOSE_DEBUG         = os.getenv("EXPOSE_DEBUG", "0") == "1"
 IABOOT_ON = os.getenv("IABOOT_ON", "0") == "1"
 IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-4o")
 IABOOT_TEMPERATURE = float(os.getenv("IABOOT_TEMPERATURE", "0.5"))
-# --- precios Stripe (IDs de price) ---
-STRIPE_PRICE_MONTHLY = os.getenv("STRIPE_PRICE_MONTHLY")     # subscription
-STRIPE_PRICE_ANNUAL  = os.getenv("STRIPE_PRICE_ANNUAL")      # subscription
-# OXXO: pago único en MXN (crea productos/precios "one-time")
-STRIPE_PRICE_OXXO_MONTHLY = os.getenv("STRIPE_PRICE_OXXO_MONTHLY")
-STRIPE_PRICE_OXXO_ANNUAL  = os.getenv("STRIPE_PRICE_OXXO_ANNUAL")
+# --- precios Stripe (IDs de price) --- # ELIMINADO
+# STRIPE_PRICE_MONTHLY = os.getenv("STRIPE_PRICE_MONTHLY")
+# STRIPE_PRICE_ANNUAL  = os.getenv("STRIPE_PRICE_ANNUAL")
+# STRIPE_PRICE_OXXO_MONTHLY = os.getenv("STRIPE_PRICE_OXXO_MONTHLY")
+# STRIPE_PRICE_OXXO_ANNUAL  = os.getenv("STRIPE_PRICE_OXXO_ANNUAL")
 
-# --- PayPal ---
-PAYPAL_CLIENT_ID     = os.getenv("PAYPAL_CLIENT_ID")
-PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET")
-PAYPAL_MODE          = os.getenv("PAYPAL_MODE", "sandbox")   # 'live' o 'sandbox'
-PAYPAL_PRICE_MONTHLY = os.getenv("PAYPAL_PRICE_MONTHLY")     # ej: 9.99
-PAYPAL_PRICE_ANNUAL  = os.getenv("PAYPAL_PRICE_ANNUAL")      # ej: 99.00
-PAYPAL_CURRENCY      = os.getenv("PAYPAL_CURRENCY", "USD")
+# --- PayPal --- # ELIMINADO
+# PAYPAL_CLIENT_ID     = os.getenv("PAYPAL_CLIENT_ID")
+# PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET")
+# PAYPAL_MODE          = os.getenv("PAYPAL_MODE", "sandbox")
+# PAYPAL_PRICE_MONTHLY = os.getenv("PAYPAL_PRICE_MONTHLY")
+# PAYPAL_PRICE_ANNUAL  = os.getenv("PAYPAL_PRICE_ANNUAL")
+# PAYPAL_CURRENCY      = os.getenv("PAYPAL_CURRENCY", "USD")
 
+# try: # ELIMINADO
+#     from paypalcheckoutsdk.core import PayPalHttpClient, SandboxEnvironment, LiveEnvironment # ELIMINADO
+#     from paypalcheckoutsdk.orders import OrdersCreateRequest, OrdersCaptureRequest # ELIMINADO
+#     PAYPAL_OK = True # ELIMINADO
+# except Exception: # ELIMINADO
+#     PAYPAL_OK = False # ELIMINADO
 
-try:
-    from paypalcheckoutsdk.core import PayPalHttpClient, SandboxEnvironment, LiveEnvironment
-    from paypalcheckoutsdk.orders import OrdersCreateRequest, OrdersCaptureRequest
-    PAYPAL_OK = True
-except Exception:
-    PAYPAL_OK = False
-
-def _paypal_client():
-    if not PAYPAL_OK:
-        raise HTTPException(500, "PayPal SDK no instalado")
-    if not (PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET):
-        raise HTTPException(500, "PayPal no configurado")
-    env = LiveEnvironment(client_id=PAYPAL_CLIENT_ID, client_secret=PAYPAL_CLIENT_SECRET) \
-          if PAYPAL_MODE == "live" else SandboxEnvironment(client_id=PAYPAL_CLIENT_ID, client_secret=PAYPAL_CLIENT_SECRET)
-    return PayPalHttpClient(env)
+# def _paypal_client(): # ELIMINADO
+#     if not PAYPAL_OK: # ELIMINADO
+#         raise HTTPException(500, "PayPal SDK no instalado") # ELIMINADO
+#     if not (PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET): # ELIMINADO
+#         raise HTTPException(500, "PayPal no configurado") # ELIMINADO
+#     env = LiveEnvironment(client_id=PAYPAL_CLIENT_ID, client_secret=PAYPAL_CLIENT_SECRET) \ # ELIMINADO
+#           if PAYPAL_MODE == "live" else SandboxEnvironment(client_id=PAYPAL_CLIENT_ID, client_secret=PAYPAL_CLIENT_SECRET) # ELIMINADO
+#     return PayPalHttpClient(env) # ELIMINADO
 # --------------------------------------------------------------------------------------
 # Configuración básica
 # --------------------------------------------------------------------------------------
@@ -99,17 +96,7 @@ _openai_client = OpenAI()
 
 app = FastAPI(title="FootyMines API (hybrid-core)")
 
-
-class BillingCheckoutIn(BaseModel):
-    plan: str            # 'monthly' | 'annual'
-    method: str          # 'card' | 'oxxo'
-    user_email: Optional[str] = None
-
-class PayPalStartIn(BaseModel):
-    plan: str            # 'monthly' | 'annual'
-
-class PayPalCaptureIn(BaseModel):
-    order_id: str
+# ELIMINADOS: BillingCheckoutIn, PayPalStartIn, PayPalCaptureIn, CheckoutIn
 
 # CORS abierto (ajusta si necesitas)
 app.add_middleware(
@@ -121,33 +108,19 @@ app.add_middleware(
 )
 
 # --------------------------------------------------------------------------------------
-# Lógica de Validación PREMIUM
+# Lógica de Validación PREMIUM (SIMPLIFICADA / ELIMINADA)
 # --------------------------------------------------------------------------------------
 def check_premium(key: Optional[str], request: Optional[Request] = None):
-    # 1) Leer de header si no vino en el body
-    if (not key) and request:
-        key = request.headers.get("X-Premium-Key")
+    """
+    Manteniendo esta función por compatibilidad con los endpoints,
+    pero siempre devuelve True al eliminar el gateo premium.
+    """
+    return True
+    # raise HTTPException(status_code=401, detail="Acceso Premium requerido.") # Originalmente aquí
 
-    # 2) Entorno inseguro (dev) o clave maestra
-    if PREMIUM_KEY_SECRET == "DEFAULT_DISABLED_KEY":
-        return True
-    if key and key == PREMIUM_KEY_SECRET:
-        return True
+# Funciones de utilidades generales (se mantienen)
+# ... [clamp01, safe_prob, logit, sigmoid, blend_logit, implied_1x2, implied_single] ...
 
-    # 3) Buscar premium_key en DB y validar estado/periodo
-    if key:
-        rec = premium_find_by_key(key)
-        if rec and rec.get("status") in ("active", "trialing"):
-            now = int(datetime.now(tz=timezone.utc).timestamp())
-            cpe = int(rec.get("current_period_end") or 0)
-            if cpe == 0 or now <= cpe:
-                return True
-
-    raise HTTPException(status_code=401, detail="Acceso Premium requerido.")
-
-# --------------------------------------------------------------------------------------
-# Utilidades generales
-# --------------------------------------------------------------------------------------
 def clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
 
@@ -192,9 +165,9 @@ def implied_single(odd: Optional[float]) -> Optional[float]:
         return None
     return 1.0 / odd
 
-# --------------------------------------------------------------------------------------
-# Matrices de Poisson y (opcional) ajuste DC ligero
-# --------------------------------------------------------------------------------------
+# Funciones de Poisson y Dixon-Coles (se mantienen)
+# ... [poisson_matrix, p_over_xdot5, p_under_xdot5, dixon_coles_soft, matrix_1x2_o25_btts] ...
+
 def poisson_matrix(lh: float, la: float, kmax: int = POISSON_MAX_GOALS) -> np.ndarray:
     """Matriz (kmax+1 x kmax+1) de probabilidades de marcador i-j."""
     i = np.arange(0, kmax + 1)
@@ -231,13 +204,13 @@ def dixon_coles_soft(M: np.ndarray, rho: float) -> np.ndarray:
 def matrix_1x2_o25_btts(M: np.ndarray) -> Dict[str, float]:
     """Agrega la matriz a probabilidades de 1/X/2, Over2.5 y BTTS."""
     kmax = M.shape[0] - 1
-    home = float(np.tril(M, -1).sum())           # i > j
-    draw = float(np.trace(M))                   # i == j
-    away = float(np.triu(M, 1).sum())            # i < j
+    home = float(np.tril(M, -1).sum())        # i > j
+    draw = float(np.trace(M))                # i == j
+    away = float(np.triu(M, 1).sum())          # i < j
     over25 = float(sum(M[i, j] for i in range(kmax + 1)
-                               for j in range(kmax + 1) if (i + j) >= 3))
+                                 for j in range(kmax + 1) if (i + j) >= 3))
     btts = float(sum(M[i, j] for i in range(1, kmax + 1)
-                             for j in range(1, kmax + 1)))
+                                 for j in range(1, kmax + 1)))
     # Top scorelines
     pairs = [((i, j), float(M[i, j])) for i in range(kmax + 1) for j in range(kmax + 1)]
     pairs.sort(key=lambda x: x[1], reverse=True)
@@ -251,9 +224,9 @@ def matrix_1x2_o25_btts(M: np.ndarray) -> Dict[str, float]:
         "top_scorelines": top,
     }
 
-# --------------------------------------------------------------------------------------
-# League store (stats por liga) + calibradores opcionales
-# --------------------------------------------------------------------------------------
+# Clases y Lógica de LeagueStore y Calibración (se mantienen)
+# ... [PlattScaler, TrioCalibrator, LeagueStore, load_all_leagues] ...
+
 class PlattScaler:
     """ Calibración Platt: p' = sigmoid(a*logit(p)+b) """
     def __init__(self, a: float = 1.0, b: float = 0.0):
@@ -508,107 +481,7 @@ def init_db():
 
 init_db()
 
-def init_premium_db():
-    conn = _db()
-    cur = conn.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS premium_keys (
-      premium_key TEXT PRIMARY KEY,
-      email TEXT,
-      customer_id TEXT,
-      subscription_id TEXT,
-      plan TEXT,
-      status TEXT,
-      current_period_end INTEGER,
-      created_at INTEGER,
-      updated_at INTEGER
-    )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_pk_customer ON premium_keys(customer_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_pk_subscription ON premium_keys(subscription_id)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_pk_email ON premium_keys(email)")
-    conn.commit()
-    conn.close()
-
-init_premium_db()
-
-def premium_upsert(*, premium_key: str, email: str, customer_id: str,
-                   subscription_id: str, plan: str, status: str, current_period_end: int):
-    now = int(datetime.now(tz=timezone.utc).timestamp())
-    conn = _db()
-    conn.execute("""
-      INSERT INTO premium_keys(premium_key,email,customer_id,subscription_id,plan,status,current_period_end,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(premium_key) DO UPDATE SET
-        email=excluded.email, customer_id=excluded.customer_id, subscription_id=excluded.subscription_id,
-        plan=excluded.plan, status=excluded.status, current_period_end=excluded.current_period_end,
-        updated_at=excluded.updated_at
-    """, (premium_key, email, customer_id, subscription_id, plan, status, current_period_end, now, now))
-    conn.commit(); conn.close()
-
-def premium_find_by_key(pkey: str):
-    conn = _db()
-    row = conn.execute("SELECT * FROM premium_keys WHERE premium_key=?", (pkey,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-def premium_find_or_create_for_customer(customer_id: str, subscription_id: str, email: str,
-                                        plan: str, status: str, current_period_end: int) -> str:
-    conn = _db()
-    row = conn.execute("SELECT premium_key FROM premium_keys WHERE customer_id=?", (customer_id,)).fetchone()
-    conn.close()
-    pkey = row["premium_key"] if row else secrets.token_urlsafe(24)
-    premium_upsert(premium_key=pkey, email=email or "", customer_id=customer_id,
-                   subscription_id=subscription_id, plan=plan, status=status,
-                   current_period_end=int(current_period_end or 0))
-    return pkey
-
-def _derive_cpe_from_sub(sub: dict) -> int:
-    """
-    Devuelve epoch del final del periodo actual de la suscripción `sub`,
-    intentando varias formas compatibles con la API clover:
-      1) sub["current_period_end"]
-      2) sub["current_period"]["end"]
-      3) Derivar desde price.recurring (interval, interval_count)
-    """
-    # 1) Campo clásico
-    try:
-        cpe = sub.get("current_period_end")
-        if cpe:
-            return int(cpe)
-    except Exception:
-        pass
-
-    # 2) Forma nueva anidada
-    try:
-        cp = sub.get("current_period") or {}
-        if cp.get("end"):
-            return int(cp["end"])
-    except Exception:
-        pass
-
-    # 3) Fallback: derivar desde el price.recurring
-    now = int(datetime.now(tz=timezone.utc).timestamp())
-    try:
-        items = (sub.get("items") or {}).get("data", [])
-        item = items[0] if items else {}
-        price = item.get("price") or {}
-        recurring = price.get("recurring") or {}
-        interval = (recurring.get("interval") or "month").lower()
-        count = int(recurring.get("interval_count") or 1)
-
-        seconds = {
-            "day": 86400,
-            "week": 7 * 86400,
-            "month": 30 * 86400,
-            "year": 365 * 86400,
-        }.get(interval, 30 * 86400)
-
-        return now + count * seconds
-    except Exception:
-        # Último fallback: 30 días
-        return now + 30 * 86400
-
+# ELIMINADO: init_premium_db, premium_upsert, premium_find_by_key, premium_find_or_create_for_customer, _derive_cpe_from_sub
 
 # Cache simple (clave → (ts, data))
 _CACHE: Dict[str, Tuple[float, dict]] = {}
@@ -641,10 +514,10 @@ class PredictIn(BaseModel):
     league: str
     home_team: str
     away_team: str
-    odds: Optional[Dict[str, float]] = None 
-    expert: bool = False  
-    premium_key: Optional[str] = None # <-- AÑADIDO
-    
+    odds: Optional[Dict[str, float]] = None
+    expert: bool = False
+    premium_key: Optional[str] = None # Se mantiene por compatibilidad del endpoint IABoot/Parlay
+
 
 class BestPick(BaseModel):
     market: str
@@ -668,21 +541,21 @@ class ParlayLegIn(BaseModel):
     league: str
     home_team: str
     away_team: str
-    odds: Optional[Dict[str, float]] = None 
+    odds: Optional[Dict[str, float]] = None
 
 class ParlayIn(BaseModel):
     legs: List[ParlayLegIn] = Field(default_factory=list)
-    mode: Optional[str] = "value" 
-    premium_key: Optional[str] = None # <-- AÑADIDO
+    mode: Optional[str] = "value"
+    premium_key: Optional[str] = None # Se mantiene por compatibilidad
 
 class ParlayLegOut(BaseModel):
     league: str
     home_team: str
     away_team: str
     pick: BestPick
-    probs: Dict[str, float]       
+    probs: Dict[str, float]
     used_odd: Optional[float] = None
-    fair_prob_pct: float          
+    fair_prob_pct: float
     ev: Optional[float] = None
 
 class ParlayOut(BaseModel):
@@ -692,14 +565,14 @@ class ParlayOut(BaseModel):
     combined_used_odds: Optional[float] = None
     combined_ev: Optional[float] = None
     summary: str
-    premium: bool = True
+    premium: bool = False # Cambiado a False
 
 class BuilderIn(BaseModel):
     league: str
     home_team: str
     away_team: str
-    odds: Optional[Dict[str, float]] = None  
-    premium_key: Optional[str] = None # <-- AÑADIDO
+    odds: Optional[Dict[str, float]] = None
+    premium_key: Optional[str] = None # Se mantiene por compatibilidad
 
 class BuilderLegOut(BaseModel):
     market: str
@@ -712,24 +585,20 @@ class BuilderOut(BaseModel):
     summary: str
     debug: Optional[Dict[str, float]] = None
 
-# --- NUEVO MODELO PARA EL CHECKOUT (Repetido en caso de error, se usa el de arriba) ---
-class CheckoutIn(BaseModel):
-    price_id: str
-    user_email: str
-# ------------------------------------
+# ELIMINADO: CheckoutIn
 
 # ===== IA Boot (salida estructurada) =====
 class IABootLeg(BaseModel):
-    market: str           
-    selection: str        
-    prob_pct: float       
-    confidence: float     
-    rationale: str        
+    market: str
+    selection: str
+    prob_pct: float
+    confidence: float
+    rationale: str
 
 class IABootOut(BaseModel):
     match: str
     league: str
-    summary: str          
+    summary: str
     picks: List[IABootLeg]
 
 
@@ -795,286 +664,46 @@ def _call_openai_structured(model: str, temperature: float, schema: dict, messag
         model=model,
         temperature=temperature,
         # Usaremos el formato JSON estándar
-        response_format={"type": "json_object"}, 
+        response_format={"type": "json_object"},
         messages=messages,
-        max_tokens=800,  
+        max_tokens=800,
     )
 
 # --------------------------------------------------------------------------------------
-# ENDPOINT DE CHECKOUT (CORREGIDO)
+# ENDPOINTS DE CHECKOUT / BILLING (ELIMINADOS)
 # --------------------------------------------------------------------------------------
-@app.post("/create-checkout-session")
-def create_checkout_session(inp: CheckoutIn):
-    if not stripe.api_key:
-        raise HTTPException(status_code=503, detail="Stripe no configurado")
-
-    try:
-        success_url = f"{FRONTEND_URL}/app?success=true&session_id={{CHECKOUT_SESSION_ID}}"
-        cancel_url  = f"{FRONTEND_URL}/app?canceled=true"
-
-        checkout_session = stripe.checkout.Session.create(
-            mode="subscription",
-            line_items=[{"price": inp.price_id, "quantity": 1}],
-            success_url=success_url,
-            cancel_url=cancel_url,
-            customer_email=inp.user_email or None,  # opcional; Stripe la pide igual
-            allow_promotion_codes=True,
-        )
-        return {"session_url": checkout_session.url}
-    except stripe.error.StripeError as e:
-        raise HTTPException(status_code=400, detail=e.user_message or "Error Stripe")
-
-@app.post("/billing/checkout")
-def billing_checkout(inp: BillingCheckoutIn):
-    if not stripe.api_key:
-        raise HTTPException(503, "Stripe no configurado")
-
-    success_url = f"{FRONTEND_URL}/app?success=true&session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url  = f"{FRONTEND_URL}/app?canceled=true"
-
-    if inp.method == "card":
-        # ✅ ahora soporta weekly
-        if inp.plan == "annual":
-            price_id = STRIPE_PRICE_ANNUAL
-        elif inp.plan == "weekly":
-            price_id = os.getenv("STRIPE_PRICE_WEEKLY")
-        else:
-            price_id = STRIPE_PRICE_MONTHLY
-
-        if not price_id:
-            raise HTTPException(400, "Falta STRIPE_PRICE_MONTHLY/ANNUAL/WEEKLY")
-
-        s = stripe.checkout.Session.create(
-            mode="subscription",
-            line_items=[{"price": price_id, "quantity": 1}],
-            customer_email=inp.user_email or None,
-            success_url=success_url,
-            cancel_url=cancel_url,
-            allow_promotion_codes=True,
-        )
-        return {"provider": "stripe", "url": s.url}
-
-    if inp.method == "oxxo":
-        # (sin cambios, lo dejamos para más adelante)
-        ...
-
-    if not stripe.api_key:
-        raise HTTPException(503, "Stripe no configurado")
-
-    success_url = f"{FRONTEND_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url  = f"{FRONTEND_URL}?canceled=true"
-
-    if inp.method == "card":
-        price_id = STRIPE_PRICE_ANNUAL if inp.plan == "annual" else STRIPE_PRICE_MONTHLY
-        if not price_id:
-            raise HTTPException(400, "Falta STRIPE_PRICE_MONTHLY/ANNUAL")
-        s = stripe.checkout.Session.create(
-            mode="subscription",
-            line_items=[{"price": price_id, "quantity": 1}],
-            customer_email=inp.user_email or None,
-            success_url=success_url,
-            cancel_url=cancel_url,
-            allow_promotion_codes=True,
-        )
-        return {"provider": "stripe", "url": s.url}
-
-    if inp.method == "oxxo":
-        # OXXO = pago único (no suscripción). Daremos acceso 30/365 días cuando el pago quede 'succeeded'.
-        price_id = STRIPE_PRICE_OXXO_ANNUAL if inp.plan == "annual" else STRIPE_PRICE_OXXO_MONTHLY
-        if not price_id:
-            raise HTTPException(400, "Falta STRIPE_PRICE_OXXO_MONTHLY/ANNUAL")
-        s = stripe.checkout.Session.create(
-            mode="payment",
-            line_items=[{"price": price_id, "quantity": 1}],
-            payment_method_types=["oxxo"],
-            payment_intent_data={"metadata": {"plan": inp.plan, "pm": "oxxo"}},
-            customer_email=inp.user_email or None,
-            success_url=success_url,
-            cancel_url=cancel_url,
-            metadata={"plan": inp.plan, "pm": "oxxo"},
-        )
-        return {"provider": "stripe", "url": s.url}
-
-    raise HTTPException(400, "Método no soportado")
-
-def _sync_from_sub_id(sub_id: str):
-    # Expandimos para tener price y customer en la misma respuesta
-    sub = stripe.Subscription.retrieve(sub_id, expand=["items.data.price", "customer"])
-
-    # customer puede venir como string o dict expandido
-    customer_id = sub["customer"]["id"] if isinstance(sub.get("customer"), dict) else sub["customer"]
-    plan = sub["items"]["data"][0]["price"]["id"]
-    status = sub["status"]
-    cpe = _derive_cpe_from_sub(sub)
-
-    # email
-    try:
-        if isinstance(sub.get("customer"), dict):
-            email = sub["customer"].get("email") or ""
-        else:
-            cust = stripe.Customer.retrieve(customer_id)
-            email = cust.get("email") or ""
-    except Exception:
-        email = ""
-
-    premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, int(cpe))
-
-@app.post("/stripe/webhook")
-async def stripe_webhook(request: Request):
-    payload = await request.body()
-    sig = request.headers.get("stripe-signature")
-    try:
-        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Webhook error: {e}")
-
-    et  = event.get("type")
-    obj = event["data"]["object"]
-
-    # ---------- helpers ----------
-    def _period_end(plan: str) -> int:
-        now = int(datetime.now(tz=timezone.utc).timestamp())
-        return now + (365*24*3600 if plan == "annual" else 30*24*3600)
-
-
-    def _sub_id_from_invoice(inv: dict) -> Optional[str]:
-        # 1) viejo: inv.subscription
-        sid = inv.get("subscription")
-        if sid: return sid
-        # 2) nuevo: inv.subscription_details.subscription
-        sd = (inv.get("subscription_details") or {}).get("subscription")
-        if sd: return sd
-        # 3) nuevo: inv.parent.subscription_details.subscription
-        pd = ((inv.get("parent") or {}).get("subscription_details") or {}).get("subscription")
-        if pd: return pd
-        # 4) línea 0 → parent.subscription_item_details.subscription
-        try:
-            line0 = (inv.get("lines") or {}).get("data", [])[0] or {}
-            return ((line0.get("parent") or {}).get("subscription_item_details") or {}).get("subscription")
-        except Exception:
-            return None
-
-    # ---------- 1) Checkout completado ----------
-    if et == "checkout.session.completed":
-        if obj.get("mode") == "subscription":
-            sub_id = obj.get("subscription")
-            if sub_id:
-                _sync_from_sub_id(sub_id)
-        # Si el modo fuera "payment" (OXXO), no activamos aquí. Esperamos a payment_intent.succeeded.
-
-    # ---------- 2) OXXO confirmado ----------
-    elif et == "payment_intent.succeeded":
-        pi = obj
-        pm_types = pi.get("payment_method_types") or []
-        if "oxxo" in pm_types:
-            meta = pi.get("metadata") or {}
-            plan = (meta.get("plan") or "monthly").lower()
-
-            # mejor esfuerzo para email
-            email = ""
-            try:
-                if pi.get("customer"):
-                    cust = stripe.Customer.retrieve(pi["customer"])
-                    email = cust.get("email") or ""
-                elif (pi.get("charges") or {}).get("data"):
-                    email = ((pi["charges"]["data"][0].get("billing_details") or {}).get("email")) or ""
-            except Exception:
-                pass
-
-            pkey = secrets.token_urlsafe(24)
-            premium_upsert(
-                premium_key=pkey,
-                email=email,
-                customer_id=pi.get("customer") or "",
-                subscription_id=pi["id"],   # guardamos el PaymentIntent para OXXO
-                plan=f"oxxo_{plan}",
-                status="active",
-                current_period_end=_period_end(plan),
-            )
-
-    # ---------- 3) Renovaciones / cambios ----------
-    elif et == "invoice.payment_succeeded":
-        sub_id = _sub_id_from_invoice(obj)
-        if sub_id:
-            _sync_from_sub_id(sub_id)
-
-    elif et == "customer.subscription.updated":
-        _sync_from_sub_id(obj.get("id"))
-
-    # ---------- 4) Cancelaciones / fallos ----------
-    elif et == "invoice.payment_failed":
-        sub_id = _sub_id_from_invoice(obj)
-        if sub_id:
-            _sync_from_sub_id(sub_id)
-
-    elif et == "customer.subscription.deleted":
-        _sync_from_sub_id(obj.get("id"))
-
-    return {"ok": True}
-
+# @app.post("/create-checkout-session") ... ELIMINADO
+# @app.post("/billing/checkout") ... ELIMINADO
+# def _sync_from_sub_id(sub_id: str): ... ELIMINADO
+# @app.post("/stripe/webhook") ... ELIMINADO
+# @app.get("/stripe/redeem") ... ELIMINADO
+# @app.post("/create-billing-portal") ... ELIMINADO
+# @app.post("/paypal/create-order") ... ELIMINADO
+# @app.post("/paypal/capture") ... ELIMINADO
 
 @app.get("/top-matches")
 def top_matches(date: str | None = Query(default=None)):
     try:
+        # Asumiendo que 'top_matches_payload' es una función de utilidades externa
+        # que no depende de la lógica de pagos.
         return top_matches_payload(date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/stripe/redeem")
-def stripe_redeem(session_id: str):
-    sess = stripe.checkout.Session.retrieve(session_id)
-    sub_id = sess.get("subscription")
-    if not sub_id:
-        raise HTTPException(status_code=404, detail="No hay suscripción en la sesión")
-
-    sub = stripe.Subscription.retrieve(sub_id, expand=["items.data.price", "customer"])
-
-    customer_id = sub["customer"]["id"] if isinstance(sub.get("customer"), dict) else sub["customer"]
-    plan = sub["items"]["data"][0]["price"]["id"]
-    status = sub["status"]
-    cpe = _derive_cpe_from_sub(sub)
-
-    try:
-        if isinstance(sub.get("customer"), dict):
-            email = sub["customer"].get("email") or ""
-        else:
-            cust = stripe.Customer.retrieve(customer_id)
-            email = cust.get("email") or ""
-    except Exception:
-        email = ""
-
-    pkey = premium_find_or_create_for_customer(customer_id, sub_id, email, plan, status, int(cpe))
-    return {"premium_key": pkey, "status": status, "current_period_end": int(cpe)}
-
-
-class PortalIn(BaseModel):
-    premium_key: str
-
-@app.post("/create-billing-portal")
-def create_billing_portal(inp: PortalIn):
-    rec = premium_find_by_key(inp.premium_key)
-    if not rec or not rec.get("customer_id"):
-        raise HTTPException(status_code=404, detail="Clave no encontrada")
-    sess = stripe.billing_portal.Session.create(
-        customer=rec["customer_id"],
-        return_url=FRONTEND_URL,
-    )
-    return {"url": sess.url}
 
 # --------------------------------------------------------------------------------------
-# ENDPOINT PARLAY (CON GATEO)
+# ENDPOINT PARLAY (CON ELIMINACIÓN DE GATEO)
 # --------------------------------------------------------------------------------------
 @app.post("/parlay/suggest", response_model=ParlayOut)
 def parlay_suggest(inp: ParlayIn, request: Request):
-    # --- PASO 1: APLICAR EL GATEO PREMIUM ---
-    check_premium(inp.premium_key, request)
+    # --- PASO 1: ELIMINAR EL GATEO PREMIUM ---
+    # check_premium(inp.premium_key, request) # ELIMINADO
     # ----------------------------------------
     if not inp.legs or len(inp.legs) == 0:
         raise HTTPException(status_code=400, detail="Debes enviar 1..4 partidos")
 
     legs_out: List[ParlayLegOut] = []
     probs01: List[float] = []
-    # ... (el resto del código de parlay sigue igual)
     used_odds: List[float] = []
 
     for L in inp.legs[:4]:
@@ -1128,17 +757,11 @@ def parlay_suggest(inp: ParlayIn, request: Request):
         combined_used_odds=combined_used_odds,
         combined_ev=combined_ev,
         summary=summary,
-        premium=True,
+        premium=False, # Ahora es siempre False
     )
 
-# --------------------------------------------------------------------------------------
-# NÚCLEO DE PREDICCIÓN (SIN CAMBIOS FUNCIONALES AQUÍ)
-# --------------------------------------------------------------------------------------
-# ... (las funciones predict_core, confidence_from_prob, etc. son correctas)
-
-# =========================
-# Núcleo de predicción
-# =========================
+# NÚCLEO DE PREDICCIÓN (Se mantiene)
+# ... [confidence_from_prob, _choose_best_pick, predict_core] ...
 
 def confidence_from_prob(prob_pct: float) -> float:
     """
@@ -1299,9 +922,9 @@ def predict_core(store: "LeagueStore", home: str, away: str, odds: Optional[Dict
         },
     }
 
-# =========================
-# (Opcional) helpers para IABoot si activas IABOOT_ON
-# =========================
+# (Opcional) helpers para IABoot (Se mantienen)
+# ... [_recent_form_snippet, _iaboot_schema, _iaboot_messages] ...
+
 def _recent_form_snippet(store: "LeagueStore", home: str, away: str, n: int = 6) -> str:
     # Stub sencillo; si quieres, puedes enriquecer con rachas reales desde store.df
     return ""
@@ -1330,7 +953,7 @@ def _iaboot_schema() -> dict:
                                 "type": "string",
                                 "enum": ["1","X","2","Sí","No"]
                             },
-                            "prob_pct":   {"type": "number", "minimum": 0, "maximum": 100},
+                            "prob_pct":  {"type": "number", "minimum": 0, "maximum": 100},
                             "confidence": {"type": "number", "minimum": 0, "maximum": 100},
                             "rationale":  {"type": "string"}
                         },
@@ -1359,7 +982,7 @@ def _iaboot_messages(pred: PredictOut, odds: dict | None, form_text: str) -> tup
     user_msg = (
         f"Partido: {pred.home_team} vs {pred.away_team} en {pred.league}.\n"
         f"Probabilidades del modelo (%%):\n"
-        f"- 1: {pred.probs['home_win_pct']}   X: {pred.probs['draw_pct']}   2: {pred.probs['away_win_pct']}\n"
+        f"- 1: {pred.probs['home_win_pct']}    X: {pred.probs['draw_pct']}    2: {pred.probs['away_win_pct']}\n"
         f"- Over 2.5: {pred.probs['over_2_5_pct']}\n"
         f"- BTTS Sí: {pred.probs['btts_pct']}\n\n"
         f"Lambdas Poisson: local={pred.poisson.get('home_lambda')}  visitante={pred.poisson.get('away_lambda')}\n"
@@ -1375,19 +998,18 @@ def _iaboot_messages(pred: PredictOut, odds: dict | None, form_text: str) -> tup
     return sys_msg, user_msg
 
 # --------------------------------------------------------------------------------------
-# ENDPOINT BUILDER (CON GATEO)
+# ENDPOINT BUILDER (CON ELIMINACIÓN DE GATEO)
 # --------------------------------------------------------------------------------------
 @app.post("/builder/suggest", response_model=BuilderOut)
 def builder_suggest(inp: BuilderIn, request: Request):
-    # --- PASO 1: APLICAR EL GATEO PREMIUM ---
-    check_premium(inp.premium_key, request)
+    # --- PASO 1: ELIMINAR EL GATEO PREMIUM ---
+    # check_premium(inp.premium_key, request) # ELIMINADO
     # ----------------------------------------
     # Reutiliza las probabilidades ya calibradas/mezcladas del core
     pred = predict_sync(PredictIn(
         league=inp.league, home_team=inp.home_team, away_team=inp.away_team, odds=inp.odds
     ))
 
-    # ... (el resto del código builder es correcto)
     # --- Probabilidades ya blendeadas ---
     p1  = pred.probs["home_win_pct"] / 100.0
     px  = pred.probs["draw_pct"] / 100.0
@@ -1434,7 +1056,7 @@ def builder_suggest(inp: BuilderIn, request: Request):
         added_goals = True
     else:
         # Under 3.5 si pinta cerrado
-        p_u35 = p_under_xdot5(lam_sum, 3.5)     # <=3 goles
+        p_u35 = p_under_xdot5(lam_sum, 3.5)       # <=3 goles
         if p_u35 >= 0.59 and lam_sum <= 2.4:
             picks.append(BuilderLegOut(market="Goles", selection="Menos de 3.5", prob_pct=round(p_u35*100,2)))
             added_goals = True
@@ -1462,10 +1084,10 @@ def builder_suggest(inp: BuilderIn, request: Request):
     # orden preferente según λ
     if lam_cards <= 4.8:
         # under-friendly: priorizamos los under
-        cands.sort(key=lambda x: (("Menos" not in x[0]), -x[1]))    # under primero, luego prob desc
+        cands.sort(key=lambda x: (("Menos" not in x[0]), -x[1]))   # under primero, luego prob desc
     else:
         # over-friendly
-        cands.sort(key=lambda x: (("Más" not in x[0]), -x[1]))      # over primero
+        cands.sort(key=lambda x: (("Más" not in x[0]), -x[1]))     # over primero
     for sel, p in cands:
         if p >= 0.60:
             best_cards = (sel, p)
@@ -1486,16 +1108,16 @@ def builder_suggest(inp: BuilderIn, request: Request):
         prod *= p
 
     k = len(probs01)
-    prod_adj = prod * (0.92 ** max(0, k-1))     # penalización general por múltiples
+    prod_adj = prod * (0.92 ** max(0, k-1))       # penalización general por múltiples
 
     has_over = any(p.market=="Goles" and "Más de 2.5" in p.selection for p in picks)
     has_btts = any(p.market=="BTTS" and "Sí" in p.selection for p in picks)
     has_1x2  = any(p.market in ("Ganador","Doble oportunidad") for p in picks)
 
     if has_over and has_btts:
-        prod_adj *= 0.88    # correlación fuerte
+        prod_adj *= 0.88     # correlación fuerte
     if has_1x2 and has_over:
-        prod_adj *= 0.95    # algo correlacionados
+        prod_adj *= 0.95     # algo correlacionados
 
     prod_adj = clamp01(prod_adj)
 
@@ -1513,6 +1135,9 @@ def builder_suggest(inp: BuilderIn, request: Request):
         summary=summary,
         debug=None
     )
+
+# Funciones de normalización para IABoot (Se mantienen)
+# ... [_norm_text, _canon_market_selection] ...
 
 def _norm_text(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip().lower()
@@ -1556,14 +1181,13 @@ def _canon_market_selection(market_raw: str, selection_raw: str, home_name: str,
     # Fallback razonable
     return ("BTTS","Sí","BTTS","Sí")
 
-
 # --------------------------------------------------------------------------------------
-# ENDPOINT IABOOT (CON GATEO Y CORRECCIÓN DE PORCENTAJES)
+# ENDPOINT IABOOT (CON ELIMINACIÓN DE GATEO)
 # --------------------------------------------------------------------------------------
 @app.post("/iaboot/predict", response_model=IABootOut)
 def iaboot_predict(inp: PredictIn, request: Request):
-    # --- PASO 1: APLICAR EL GATEO PREMIUM ---
-    check_premium(inp.premium_key, request)
+    # --- PASO 1: ELIMINAR EL GATEO PREMIUM ---
+    # check_premium(inp.premium_key, request) # ELIMINADO
     # ----------------------------------------
     if not IABOOT_ON:
         raise HTTPException(status_code=503, detail="IABoot está desactivado")
@@ -1597,9 +1221,9 @@ def iaboot_predict(inp: PredictIn, request: Request):
             picks=[IABootLeg(
                 market=pred.best_pick.market,
                 selection=("Gana local" if pred.best_pick.selection=="1"
-                           else "Gana visitante" if pred.best_pick.selection=="2"
-                           else "Empate" if pred.best_pick.selection=="X"
-                           else pred.best_pick.selection),
+                          else "Gana visitante" if pred.best_pick.selection=="2"
+                          else "Empate" if pred.best_pick.selection=="X"
+                          else pred.best_pick.selection),
                 prob_pct=pred.best_pick.prob_pct,
                 confidence=pred.best_pick.confidence,
                 rationale="Basado en Poisson calibrado y blend con mercado.",
@@ -1608,7 +1232,7 @@ def iaboot_predict(inp: PredictIn, request: Request):
         return fallback
 
     # A partir de aquí, la llamada fue HTTP 200 OK
-    
+
     # Extraer el JSON del campo estándar 'content'
     txt = ""
     if resp.choices and resp.choices[0].message.content:
@@ -1622,25 +1246,10 @@ def iaboot_predict(inp: PredictIn, request: Request):
         print(f"ERROR PARSING AI JSON: {e}. Raw text: {txt[:200]}...", file=sys.stderr)
         raise ValueError("AI returned non-parseable JSON.")
 
-    # ====================================================================
-    # LÓGICA DE INYECCIÓN DE PORCENTAJES FALTANTES (Para corregir el 0.00%)
-    # ====================================================================
+    # LÓGICA DE INYECCIÓN DE PORCENTAJES FALTANTES (Se mantiene)
     home_name = pred.home_team
     away_name = pred.away_team
 
-    # Mapeo de probabilidades del modelo base
-    prob_map = {
-        f"Gana Local": pred.probs.get("home_win_pct", 0), 
-        f"Gana Visitante": pred.probs.get("away_win_pct", 0),
-        "Empate": pred.probs.get("draw_pct", 0), 
-        "Over 2.5": pred.probs.get("over_2_5_pct", 0),
-        "Menos de 2.5": 100.0 - pred.probs.get("over_2_5_pct", 0),
-        "Sí": pred.probs.get("btts_pct", 0), 
-        f"{home_name} gana": pred.probs.get("home_win_pct", 0),
-        f"{away_name} gana": pred.probs.get("away_win_pct", 0),
-    }
-    
-    # Normalizar a Pydantic
     picks = []
     for p in (payload.get("picks") or []):
         raw_mkt = p.get("market","")
@@ -1694,13 +1303,11 @@ def iaboot_predict(inp: PredictIn, request: Request):
         picks=picks[:5],
     )
 
-# CÓDIGO CORREGIDO para iaboot_suggest
 @app.post("/iaboot/suggest", response_model=IABootOut)
 def iaboot_suggest(inp: PredictIn, request: Request):
     return iaboot_predict(inp, request)
 
-
-# ===== Estado Premium (para mostrar en la UI) =====
+# ===== Estado Premium (ELIMINADO / Simplificado) =====
 class PremiumStatusOut(BaseModel):
     active: bool
     plan: Optional[str] = None
@@ -1708,38 +1315,18 @@ class PremiumStatusOut(BaseModel):
     email: Optional[str] = None
     status: Optional[str] = None
 
-def _is_active_record(rec: dict) -> bool:
-    if not rec: 
-        return False
-    st = (rec.get("status") or "").lower()
-    now = int(datetime.now(tz=timezone.utc).timestamp())
-    cpe = int(rec.get("current_period_end") or 0)
-    if st in ("active", "trialing"):
-        return (cpe == 0) or (now <= cpe)
-    return False
-
+# Función simplificada, siempre activo
 @app.get("/premium/status", response_model=PremiumStatusOut)
 def premium_status(
     premium_key: Optional[str] = None,
     request: Request = None,
     premium_key_hdr: Optional[str] = Header(default=None, alias="X-Premium-Key"),
 ):
-    key = premium_key or premium_key_hdr or (request.headers.get("X-Premium-Key") if request else None)
-    if not key:
-        return PremiumStatusOut(active=False)
-    rec = premium_find_by_key(key)
-    if not rec:
-        return PremiumStatusOut(active=False)
-    return PremiumStatusOut(
-        active=_is_active_record(rec),
-        plan=rec.get("plan"),
-        current_period_end=int(rec.get("current_period_end") or 0),
-        email=rec.get("email") or None,
-        status=rec.get("status"),
-    )
+    # Ya que se eliminó el gateo, asumimos que el servicio es FREE / siempre 'active'
+    return PremiumStatusOut(active=True, plan="free", status="active")
 
 # =========================
-# RUTAS BÁSICAS PARA FRONT
+# RUTAS BÁSICAS PARA FRONT (Se mantienen)
 # =========================
 from fastapi.responses import JSONResponse
 from fastapi import Header
@@ -1768,12 +1355,10 @@ def predict_endpoint(
     request: Request,
     premium_key_hdr: Optional[str] = Header(default=None, alias="X-Premium-Key")
 ):
-    # Si quisieras gatear también predict:
-    # check_premium(inp.premium_key or premium_key_hdr, request)
     return predict_sync(inp)
 
 # =========================
-# HISTORIAL (SQLite)
+# HISTORIAL (SQLite) (Se mantiene)
 # =========================
 class HistoryLogIn(BaseModel):
     ts: Optional[int] = None
@@ -1811,7 +1396,7 @@ def history_list(limit: int = 50):
     return {"items": out}
 
 # =========================
-# ALERTAS (stub amigable)
+# ALERTAS (stub amigable) (Se mantiene, sin gateo)
 # =========================
 class ValuePickIn(BaseModel):
     league: str
@@ -1823,13 +1408,12 @@ class ValuePickIn(BaseModel):
 @app.post("/alerts/value-pick")
 def alerts_value_pick(inp: ValuePickIn, request: Request):
     # Gatea por si quieres que sólo Premium las use
-    try:
-        check_premium(inp.premium_key, request)
-    except HTTPException:
-        # Si prefieres que en modo freemium no truene el botón, puedes comentar lo anterior.
-        raise
+    # try:
+    #     check_premium(inp.premium_key, request)
+    # except HTTPException:
+    #     raise # ELIMINADO
 
-    # Calcula si sería un value pick (no envía nada, solo responde si califica)
+    # Calcula si sería un value pick
     pred = predict_sync(PredictIn(
         league=inp.league, home_team=inp.home_team, away_team=inp.away_team, odds=inp.odds
     ))
@@ -1841,62 +1425,9 @@ def alerts_value_pick(inp: ValuePickIn, request: Request):
     # Aquí podrías integrar Telegram/email si qualifies == True
     return {"ok": True, "qualifies": qualifies, "edge": round(edge, 4) if edge is not None else None}
 
-@app.post("/paypal/create-order")
-def paypal_create_order(inp: PayPalStartIn):
-    client = _paypal_client()
-    plan = inp.plan if inp.plan in ("monthly","annual") else "monthly"
-    amount = PAYPAL_PRICE_ANNUAL if plan == "annual" else PAYPAL_PRICE_MONTHLY
-    if not amount:
-        raise HTTPException(400, "Falta PAYPAL_PRICE_*")
-    req = OrdersCreateRequest()
-    req.headers["prefer"] = "return=representation"
-    req.request_body({
-        "intent": "CAPTURE",
-        "purchase_units": [{
-            "amount": {"currency_code": PAYPAL_CURRENCY, "value": str(amount)},
-            "custom_id": plan
-        }],
-        "application_context": {
-            "brand_name": "FootyMines",
-            "user_action": "PAY_NOW",
-            "return_url": f"{FRONTEND_URL}?pp_return=true",
-            "cancel_url": f"{FRONTEND_URL}?canceled=true",
-        }
-    })
-    r = client.execute(req)
-    order = r.result
-    link = next((l.href for l in order.links if l.rel == "approve"), None)
-    return {"order_id": order.id, "approve_url": link}
-
-@app.post("/paypal/capture")
-def paypal_capture(inp: PayPalCaptureIn):
-    client = _paypal_client()
-    r = client.execute(OrdersCaptureRequest(inp.order_id))
-    result = r.result
-    if result.status != "COMPLETED":
-        raise HTTPException(400, f"Estado PayPal: {result.status}")
-    email = (result.payer and result.payer.email_address) or ""
-    plan = "monthly"
-    for pu in (result.purchase_units or []):
-        if pu.custom_id in ("monthly","annual"):
-            plan = pu.custom_id
-    now = int(datetime.now(tz=timezone.utc).timestamp())
-    cpe = now + (365*24*3600 if plan == "annual" else 30*24*3600)
-    pkey = secrets.token_urlsafe(24)
-    premium_upsert(
-        premium_key=pkey,
-        email=email,
-        customer_id=result.id,
-        subscription_id=result.id,
-        plan=f"paypal_{plan}",
-        status="active",
-        current_period_end=cpe,
-    )
-    return {"premium_key": pkey, "status": "active", "current_period_end": cpe}
-
 
 # =========================
-# UTILIDAD: listar rutas
+# UTILIDAD: listar rutas (Se mantiene)
 # =========================
 @app.get("/__routes__")
 def list_routes():
