@@ -1,3 +1,5 @@
+# backend/app.py (CÓDIGO COMPLETO Y LIMPIO CON MEJORA DE EVALUACIÓN DE RENDIMIENTO)
+# === stdlib ===
 import os, sys, time, glob, math, re, secrets, sqlite3
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone, timedelta
