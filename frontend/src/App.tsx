@@ -1,3 +1,5 @@
+
+
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import IntroModal from "./components/IntroModal";
 
@@ -329,6 +331,16 @@ function EvaluationModal({
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [result, setResult] = useState<EvaluationResponse | null>(null);
+    
+    // Resetear el estado al abrir/cerrar
+    useEffect(() => {
+        if (!open) {
+            setRealHomeGoals("");
+            setRealAwayGoals("");
+            setResult(null);
+            setError("");
+        }
+    }, [open]);
 
     const onEvaluate = async () => {
         const gh = toFloat(realHomeGoals);
@@ -833,7 +845,8 @@ export default function App() {
 
             <div style={{ marginTop: 12 }}>
               <ErrorBoundary>
-                <BestPickPro data={data} odds={odds} expert={expert} />
+                {/* CORRECCIÓN: Se remueve la propiedad 'expert' de BestPickPro para evitar el error TS2322. */}
+                <BestPickPro data={data} odds={odds} />
               </ErrorBoundary>
             </div>
           </>
