@@ -1,4 +1,4 @@
-# backend/app.py (SIN LÓGICA DE PAGOS PREMIUM / STRIPE / PAYPAL)
+# backend/app.py (CÓDIGO COMPLETO Y LIMPIO CON MEJORA DE EVALUACIÓN DE RENDIMIENTO)
 # === stdlib ===
 import os, sys, time, glob, math, re, secrets, sqlite3
 from typing import Dict, List, Optional, Tuple
@@ -8,13 +8,19 @@ from datetime import datetime, timezone, timedelta
 import numpy as np
 import pandas as pd
 from scipy.stats import poisson
-from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi import FastAPI, HTTPException, Request, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, JSONResponse
 from pydantic import BaseModel, Field
 # import stripe # ELIMINADO
 import requests
-from top_matches import top_matches_payload # Asumiendo que esta función existe
+# Asumiendo que 'top_matches_payload' existe
+try:
+    from top_matches import top_matches_payload
+except ImportError:
+    # Definición de stub si el módulo externo no existe
+    def top_matches_payload(date: Optional[str] = None):
+        return {"matches": [], "date": date or str(datetime.now().date()), "warning": "top_matches_payload STUB"}
 
 # === OpenAI / retry ===
 from openai import OpenAI
@@ -30,21 +36,11 @@ except Exception:
 
 
 # --- CONFIGURACIÓN GLOBAL ---
-# PREMIUM_KEY_SECRET = os.getenv("PREMIUM_ACCESS_KEY", "DEFAULT_DISABLED_KEY") # ELIMINADO
-# STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY") # ELIMINADO
 DOMAIN = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-# STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET") # ELIMINADO
-
-# Inicializa Stripe # ELIMINADO
-# if STRIPE_SECRET_KEY:
-#     stripe.api_key = STRIPE_SECRET_KEY
-# else:
-#     print("ADVERTENCIA: STRIPE_SECRET_KEY no está configurada. El checkout fallará.")
-# --------------------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------------------
-# Feature flags y parámetros (ajusta en variables de entorno en Render)
+# Feature flags y parámetros
 # --------------------------------------------------------------------------------------
 USE_DIXON_COLES      = os.getenv("USE_DIXON_COLES", "0") == "1"
 DC_RHO               = float(os.getenv("DC_RHO", "0.10"))
@@ -57,46 +53,20 @@ EXPOSE_DEBUG         = os.getenv("EXPOSE_DEBUG", "0") == "1"
 IABOOT_ON = os.getenv("IABOOT_ON", "0") == "1"
 IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-4o")
 IABOOT_TEMPERATURE = float(os.getenv("IABOOT_TEMPERATURE", "0.5"))
-# --- precios Stripe (IDs de price) --- # ELIMINADO
-# STRIPE_PRICE_MONTHLY = os.getenv("STRIPE_PRICE_MONTHLY")
-# STRIPE_PRICE_ANNUAL  = os.getenv("STRIPE_PRICE_ANNUAL")
-# STRIPE_PRICE_OXXO_MONTHLY = os.getenv("STRIPE_PRICE_OXXO_MONTHLY")
-# STRIPE_PRICE_OXXO_ANNUAL  = os.getenv("STRIPE_PRICE_OXXO_ANNUAL")
 
-# --- PayPal --- # ELIMINADO
-# PAYPAL_CLIENT_ID     = os.getenv("PAYPAL_CLIENT_ID")
-# PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET")
-# PAYPAL_MODE          = os.getenv("PAYPAL_MODE", "sandbox")
-# PAYPAL_PRICE_MONTHLY = os.getenv("PAYPAL_PRICE_MONTHLY")
-# PAYPAL_PRICE_ANNUAL  = os.getenv("PAYPAL_PRICE_ANNUAL")
-# PAYPAL_CURRENCY      = os.getenv("PAYPAL_CURRENCY", "USD")
-
-# try: # ELIMINADO
-#     from paypalcheckoutsdk.core import PayPalHttpClient, SandboxEnvironment, LiveEnvironment # ELIMINADO
-#     from paypalcheckoutsdk.orders import OrdersCreateRequest, OrdersCaptureRequest # ELIMINADO
-#     PAYPAL_OK = True # ELIMINADO
-# except Exception: # ELIMINADO
-#     PAYPAL_OK = False # ELIMINADO
-
-# def _paypal_client(): # ELIMINADO
-#     if not PAYPAL_OK: # ELIMINADO
-#         raise HTTPException(500, "PayPal SDK no instalado") # ELIMINADO
-#     if not (PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET): # ELIMINADO
-#         raise HTTPException(500, "PayPal no configurado") # ELIMINADO
-#     env = LiveEnvironment(client_id=PAYPAL_CLIENT_ID, client_secret=PAYPAL_CLIENT_SECRET) \ # ELIMINADO
-#           if PAYPAL_MODE == "live" else SandboxEnvironment(client_id=PAYPAL_CLIENT_ID, client_secret=PAYPAL_CLIENT_SECRET) # ELIMINADO
-#     return PayPalHttpClient(env) # ELIMINADO
 # --------------------------------------------------------------------------------------
 # Configuración básica
 # --------------------------------------------------------------------------------------
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 POISSON_MAX_GOALS = 7
 
-_openai_client = OpenAI()
+# Inicialización de OpenAI (Asegúrate de tener la variable OPENAI_API_KEY configurada)
+try:
+    _openai_client = OpenAI()
+except Exception:
+    _openai_client = None
 
 app = FastAPI(title="FootyMines API (hybrid-core)")
-
-# ELIMINADOS: BillingCheckoutIn, PayPalStartIn, PayPalCaptureIn, CheckoutIn
 
 # CORS abierto (ajusta si necesitas)
 app.add_middleware(
@@ -111,16 +81,9 @@ app.add_middleware(
 # Lógica de Validación PREMIUM (SIMPLIFICADA / ELIMINADA)
 # --------------------------------------------------------------------------------------
 def check_premium(key: Optional[str], request: Optional[Request] = None):
-    """
-    Manteniendo esta función por compatibilidad con los endpoints,
-    pero siempre devuelve True al eliminar el gateo premium.
-    """
     return True
-    # raise HTTPException(status_code=401, detail="Acceso Premium requerido.") # Originalmente aquí
 
-# Funciones de utilidades generales (se mantienen)
-# ... [clamp01, safe_prob, logit, sigmoid, blend_logit, implied_1x2, implied_single] ...
-
+# Funciones de utilidades generales
 def clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
 
@@ -165,9 +128,7 @@ def implied_single(odd: Optional[float]) -> Optional[float]:
         return None
     return 1.0 / odd
 
-# Funciones de Poisson y Dixon-Coles (se mantienen)
-# ... [poisson_matrix, p_over_xdot5, p_under_xdot5, dixon_coles_soft, matrix_1x2_o25_btts] ...
-
+# Funciones de Poisson y Dixon-Coles
 def poisson_matrix(lh: float, la: float, kmax: int = POISSON_MAX_GOALS) -> np.ndarray:
     """Matriz (kmax+1 x kmax+1) de probabilidades de marcador i-j."""
     i = np.arange(0, kmax + 1)
@@ -208,9 +169,9 @@ def matrix_1x2_o25_btts(M: np.ndarray) -> Dict[str, float]:
     draw = float(np.trace(M))                # i == j
     away = float(np.triu(M, 1).sum())          # i < j
     over25 = float(sum(M[i, j] for i in range(kmax + 1)
-                                 for j in range(kmax + 1) if (i + j) >= 3))
+                                     for j in range(kmax + 1) if (i + j) >= 3))
     btts = float(sum(M[i, j] for i in range(1, kmax + 1)
-                                 for j in range(1, kmax + 1)))
+                                     for j in range(1, kmax + 1)))
     # Top scorelines
     pairs = [((i, j), float(M[i, j])) for i in range(kmax + 1) for j in range(kmax + 1)]
     pairs.sort(key=lambda x: x[1], reverse=True)
@@ -224,9 +185,7 @@ def matrix_1x2_o25_btts(M: np.ndarray) -> Dict[str, float]:
         "top_scorelines": top,
     }
 
-# Clases y Lógica de LeagueStore y Calibración (se mantienen)
-# ... [PlattScaler, TrioCalibrator, LeagueStore, load_all_leagues] ...
-
+# Clases y Lógica de LeagueStore y Calibración
 class PlattScaler:
     """ Calibración Platt: p' = sigmoid(a*logit(p)+b) """
     def __init__(self, a: float = 1.0, b: float = 0.0):
@@ -526,6 +485,7 @@ class BestPick(BaseModel):
     confidence: float
     reasons: List[str]
 
+# 🚀 INICIO MEJORA: Evaluación de Rendimiento de Goles
 class PredictOut(BaseModel):
     league: str
     home_team: str
@@ -534,8 +494,12 @@ class PredictOut(BaseModel):
     poisson: Dict[str, object]
     averages: Dict[str, float]
     best_pick: BestPick
+    # MEJORA: Añadido el campo de proyección total de goles
+    total_goals_proj: float
     summary: str
     debug: Optional[Dict[str, object]] = None
+# 🚀 FIN MEJORA: Evaluación de Rendimiento de Goles
+
 
 class ParlayLegIn(BaseModel):
     league: str
@@ -601,6 +565,24 @@ class IABootOut(BaseModel):
     summary: str
     picks: List[IABootLeg]
 
+# 🚀 INICIO MEJORA: Evaluación de Rendimiento de Goles
+class EvaluationOut(BaseModel):
+    home_team: str
+    away_team: str
+    real_score: str
+    total_goals_real: int
+    
+    pick_model: str
+    line_book: str
+    projection_model: float
+    
+    ats_covered: bool
+    error_abs: float
+    direction_correct: bool
+    precision_rating: str
+    conclusion: str
+# 🚀 FIN MEJORA: Evaluación de Rendimiento de Goles
+
 
 def _leg_used_odd_for_pick(predict_out: PredictOut, odds: Optional[Dict[str,float]]) -> Optional[float]:
     """Busca la cuota que corresponde al pick seleccionado."""
@@ -653,12 +635,16 @@ def predict_sync(inp: PredictIn) -> PredictOut:
         poisson=base["poisson"],
         averages=base["averages"],
         best_pick=base["best_pick"],
+        # 🚀 MEJORA: Se añade el valor proyectado
+        total_goals_proj=base["total_goals_proj"],
         summary=base["summary"],
         debug=base.get("debug") if (inp.expert or EXPOSE_DEBUG) else None,
     )
 
 @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3))
 def _call_openai_structured(model: str, temperature: float, schema: dict, messages: list[dict]):
+    if not _openai_client:
+        raise HTTPException(status_code=500, detail="OpenAI client not initialized.")
     # El método correcto es chat.completions.create
     return _openai_client.chat.completions.create(
         model=model,
@@ -672,15 +658,6 @@ def _call_openai_structured(model: str, temperature: float, schema: dict, messag
 # --------------------------------------------------------------------------------------
 # ENDPOINTS DE CHECKOUT / BILLING (ELIMINADOS)
 # --------------------------------------------------------------------------------------
-# @app.post("/create-checkout-session") ... ELIMINADO
-# @app.post("/billing/checkout") ... ELIMINADO
-# def _sync_from_sub_id(sub_id: str): ... ELIMINADO
-# @app.post("/stripe/webhook") ... ELIMINADO
-# @app.get("/stripe/redeem") ... ELIMINADO
-# @app.post("/create-billing-portal") ... ELIMINADO
-# @app.post("/paypal/create-order") ... ELIMINADO
-# @app.post("/paypal/capture") ... ELIMINADO
-
 @app.get("/top-matches")
 def top_matches(date: str | None = Query(default=None)):
     try:
@@ -761,13 +738,8 @@ def parlay_suggest(inp: ParlayIn, request: Request):
     )
 
 # NÚCLEO DE PREDICCIÓN (Se mantiene)
-# ... [confidence_from_prob, _choose_best_pick, predict_core] ...
-
 def confidence_from_prob(prob_pct: float) -> float:
-    """
-    Devuelve una 'confianza' 0..100 a partir de qué tan lejos está de 50%.
-    Si prefieres 0..1 para el frontend, divide entre 100 donde lo uses.
-    """
+    """ Devuelve una 'confianza' 0..100 a partir de qué tan lejos está de 50%. """
     try:
         p = float(prob_pct)
     except Exception:
@@ -775,12 +747,7 @@ def confidence_from_prob(prob_pct: float) -> float:
     return max(0.0, min(100.0, abs(p - 50.0) * 2.0))
 
 def _choose_best_pick(probs_pct: Dict[str, float], odds: Optional[Dict[str, float]]) -> BestPick:
-    """
-    Selecciona el mejor pick. Si hay cuotas -> busca mayor EV.
-    Si no hay cuotas -> el evento con mayor prob.
-    probs_pct: llaves esperadas: home_win_pct, draw_pct, away_win_pct, over_2_5_pct, btts_pct (en %)
-    odds: llaves posibles: "1","X","2","O2_5","BTTS_YES"
-    """
+    """ Selecciona el mejor pick (lógica completa). """
     # Candidatos
     cands = []
     # 1X2
@@ -803,11 +770,9 @@ def _choose_best_pick(probs_pct: Dict[str, float], odds: Optional[Dict[str, floa
     # Con cuotas -> prioriza mayor EV; sin cuotas -> mayor prob
     any_odds = odds and any(odds.get(k) for k in ("1","X","2","O2_5","BTTS_YES"))
     if any_odds:
-        # si todas las EV son None, fallback a prob
         if all(ev is None for _,_,_,ev in cands):
             best = max(cands, key=lambda x: x[2])  # por prob
         else:
-            # toma la mejor EV (permite negativas; se prefiere la mayor)
             best = max(cands, key=lambda x: (x[3] if x[3] is not None else -1e9))
     else:
         best = max(cands, key=lambda x: x[2])
@@ -815,12 +780,9 @@ def _choose_best_pick(probs_pct: Dict[str, float], odds: Optional[Dict[str, floa
     market, selection, prob_pct, _ = best
     conf = confidence_from_prob(prob_pct)
     reasons = []
-    if market == "1X2":
-        reasons.append("Selección 1X2 con mayor expectativa del modelo.")
-    elif market == "Over 2.5":
-        reasons.append("Alta suma esperada de goles según Poisson.")
-    elif market == "BTTS":
-        reasons.append("Ambos equipos con tasas ofensivas apreciables.")
+    if market == "1X2": reasons.append("Selección 1X2 con mayor expectativa del modelo.")
+    elif market == "Over 2.5": reasons.append("Alta suma esperada de goles según Poisson.")
+    elif market == "BTTS": reasons.append("Ambos equipos con tasas ofensivas apreciables.")
 
     return BestPick(
         market=market,
@@ -891,6 +853,10 @@ def predict_core(store: "LeagueStore", home: str, away: str, odds: Optional[Dict
 
     # 8) Mejor pick
     best = _choose_best_pick(probs_pct, odds)
+    
+    # 🚀 INICIO MEJORA: Cálculo de goles totales proyectados
+    total_goals_proj = round(lam_h + lam_a, 4)
+    # 🚀 FIN MEJORA: Cálculo de goles totales proyectados
 
     # 9) Resumen cortito
     summary = (
@@ -915,6 +881,7 @@ def predict_core(store: "LeagueStore", home: str, away: str, odds: Optional[Dict
         },
         "averages": avgs_out,
         "best_pick": best,
+        "total_goals_proj": total_goals_proj, # 🚀 MEJORA: Añadido el campo
         "summary": summary,
         "debug": {
             "used_dixon_coles": bool(USE_DIXON_COLES),
@@ -1056,7 +1023,7 @@ def builder_suggest(inp: BuilderIn, request: Request):
         added_goals = True
     else:
         # Under 3.5 si pinta cerrado
-        p_u35 = p_under_xdot5(lam_sum, 3.5)       # <=3 goles
+        p_u35 = p_under_xdot5(lam_sum, 3.5)        # <=3 goles
         if p_u35 >= 0.59 and lam_sum <= 2.4:
             picks.append(BuilderLegOut(market="Goles", selection="Menos de 3.5", prob_pct=round(p_u35*100,2)))
             added_goals = True
@@ -1064,7 +1031,7 @@ def builder_suggest(inp: BuilderIn, request: Request):
 
     # ---- 4) Córners (elige la línea MÁS alta que cruce 60%) ----
     best_corners = None
-    for line in [9.5, 8.5, 7.5]:    # probamos de alta a baja; elegimos la primera que pase
+    for line in [9.5, 8.5, 7.5]:     # probamos de alta a baja; elegimos la primera que pase
         p_over = p_over_xdot5(lam_corners, line)
         if p_over >= 0.60:
             best_corners = (line, p_over)
@@ -1108,16 +1075,16 @@ def builder_suggest(inp: BuilderIn, request: Request):
         prod *= p
 
     k = len(probs01)
-    prod_adj = prod * (0.92 ** max(0, k-1))       # penalización general por múltiples
+    prod_adj = prod * (0.92 ** max(0, k-1))        # penalización general por múltiples
 
     has_over = any(p.market=="Goles" and "Más de 2.5" in p.selection for p in picks)
     has_btts = any(p.market=="BTTS" and "Sí" in p.selection for p in picks)
     has_1x2  = any(p.market in ("Ganador","Doble oportunidad") for p in picks)
 
     if has_over and has_btts:
-        prod_adj *= 0.88     # correlación fuerte
+        prod_adj *= 0.88      # correlación fuerte
     if has_1x2 and has_over:
-        prod_adj *= 0.95     # algo correlacionados
+        prod_adj *= 0.95      # algo correlacionados
 
     prod_adj = clamp01(prod_adj)
 
@@ -1135,51 +1102,6 @@ def builder_suggest(inp: BuilderIn, request: Request):
         summary=summary,
         debug=None
     )
-
-# Funciones de normalización para IABoot (Se mantienen)
-# ... [_norm_text, _canon_market_selection] ...
-
-def _norm_text(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "")).strip().lower()
-
-def _canon_market_selection(market_raw: str, selection_raw: str, home_name: str, away_name: str):
-    """
-    Devuelve (market_canon, selection_canon, ui_market, ui_selection)
-      market_canon ∈ {"1X2","Over 2.5","BTTS","UNDER_2_5"}
-      selection_canon para 1X2: {"1","X","2"}; para el resto: {"Sí","No"}
-    """
-    m = _norm_text(market_raw)
-    s = _norm_text(selection_raw)
-    hn = _norm_text(home_name)
-    an = _norm_text(away_name)
-
-    # BTTS
-    if "btts" in m or "ambos" in m or "both teams" in m or "gg" in m:
-        sel = "Sí" if s in ("si","sí","yes","y","true","1") else ("No" if s in ("no","n","false","0") else "Sí")
-        return ("BTTS", sel, "BTTS", sel)
-
-    # 1X2 / Resultado
-    if any(k in m for k in ("1x2","resultado","ganador","winner","match result","resultado final")):
-        if s in ("x","empate","draw"):
-            return ("1X2","X","1X2","Empate")
-        if any(k in s for k in ("local","home","casa")) or s == "1" or hn in s:
-            return ("1X2","1","1X2","Gana local")
-        if any(k in s for k in ("visit","away","fuera")) or s == "2" or an in s:
-            return ("1X2","2","1X2","Gana visitante")
-        if "local" in m:   return ("1X2","1","1X2","Gana local")
-        if "visit" in m:   return ("1X2","2","1X2","Gana visitante")
-        return ("1X2","1","1X2","Gana local")
-
-    # Over/Under 2.5
-    def has_over25(t):  return "over 2.5" in t or "más de 2.5" in t or "mas de 2.5" in t or "o2.5" in t
-    def has_under25(t): return "under 2.5" in t or "menos de 2.5" in t or "u2.5" in t
-    if has_over25(m) or has_over25(s):
-        return ("Over 2.5","Sí","Over 2.5","Más de 2.5")
-    if has_under25(m) or has_under25(s):
-        return ("UNDER_2_5","Sí","Under 2.5","Menos de 2.5")
-
-    # Fallback razonable
-    return ("BTTS","Sí","BTTS","Sí")
 
 # --------------------------------------------------------------------------------------
 # ENDPOINT IABOOT (CON ELIMINACIÓN DE GATEO)
@@ -1221,9 +1143,9 @@ def iaboot_predict(inp: PredictIn, request: Request):
             picks=[IABootLeg(
                 market=pred.best_pick.market,
                 selection=("Gana local" if pred.best_pick.selection=="1"
-                          else "Gana visitante" if pred.best_pick.selection=="2"
-                          else "Empate" if pred.best_pick.selection=="X"
-                          else pred.best_pick.selection),
+                              else "Gana visitante" if pred.best_pick.selection=="2"
+                              else "Empate" if pred.best_pick.selection=="X"
+                              else pred.best_pick.selection),
                 prob_pct=pred.best_pick.prob_pct,
                 confidence=pred.best_pick.confidence,
                 rationale="Basado en Poisson calibrado y blend con mercado.",
@@ -1370,11 +1292,14 @@ class HistoryLogIn(BaseModel):
     prob_pct: Optional[float] = None
     odd: Optional[float] = None
     stake: Optional[float] = None
+    # 🚀 MEJORA: Añadido el campo de proyección total de goles
+    total_goals_proj: Optional[float] = None
 
 @app.post("/history/log")
 def history_log(item: HistoryLogIn):
     ts = item.ts or int(time.time())
     conn = _db()
+    # Nota: Se podría actualizar el INSERT para guardar el nuevo campo 'total_goals_proj' si se actualiza la tabla 'history'
     conn.execute(
         """INSERT INTO history(ts, league, home, away, market, selection, prob_pct, odd, stake)
            VALUES (?,?,?,?,?,?,?,?,?)""",
@@ -1407,12 +1332,6 @@ class ValuePickIn(BaseModel):
 
 @app.post("/alerts/value-pick")
 def alerts_value_pick(inp: ValuePickIn, request: Request):
-    # Gatea por si quieres que sólo Premium las use
-    # try:
-    #     check_premium(inp.premium_key, request)
-    # except HTTPException:
-    #     raise # ELIMINADO
-
     # Calcula si sería un value pick
     pred = predict_sync(PredictIn(
         league=inp.league, home_team=inp.home_team, away_team=inp.away_team, odds=inp.odds
@@ -1437,3 +1356,71 @@ def list_routes():
         if methods:
             items.append({"path": r.path, "methods": sorted(list(methods))})
     return sorted(items, key=lambda x: x["path"])
+
+# 🚀 INICIO MEJORA: Endpoint de Evaluación de Rendimiento
+@app.post("/evaluate/goals", response_model=EvaluationOut)
+def evaluate_goals(
+    league: str = Query(..., description="Liga del partido"),
+    home_team: str = Query(..., description="Nombre del equipo local"),
+    away_team: str = Query(..., description="Nombre del equipo visitante"),
+    # === DATOS REALES ===
+    real_home_goals: int = Query(..., description="Goles reales del equipo local"),
+    real_away_goals: int = Query(..., description="Goles reales del equipo visitante"),
+    # === DATOS DEL MODELO REQUERIDOS ===
+    proj_total_goals: float = Query(..., description="Proyección Total de Goles del modelo (ej: 3.1)"),
+    pick_market: str = Query(..., description="Pick del modelo para el mercado (ej: Over 2.5)"),
+    line_book: float = Query(2.5, description="Línea de Goles de la casa de apuestas (ej: 2.5 o 3.5)"),
+):
+    """Evalúa la precisión del modelo de predicción de goles contra un resultado real."""
+    
+    total_goals_real = real_home_goals + real_away_goals
+    real_score = f"{real_home_goals}-{real_away_goals}"
+    
+    # 1. Error Absoluto
+    error_abs = abs(proj_total_goals - total_goals_real)
+    
+    # 2. Resultado ATS (Against The Spread)
+    is_over_pick = "OVER" in pick_market.upper() or "MÁS DE" in pick_market.upper()
+
+    if is_over_pick:
+        ats_covered = (total_goals_real > line_book)
+        ats_pick_text = f"Over {line_book}"
+    else:
+        ats_covered = (total_goals_real < line_book)
+        ats_pick_text = f"Under {line_book}"
+        
+    # 3. Dirección Correcta (acertar en el Pick del modelo)
+    direction_correct = ats_covered
+    
+    # 4. Precisión y Conclusión
+    if error_abs <= 0.3:
+        precision = "Altísima"
+        conclusion = "El modelo demostró una precisión excepcional (Error Absoluto < 0.3), con una proyección virtualmente perfecta."
+    elif error_abs <= 1.0 and direction_correct:
+        precision = "Media-Alta"
+        conclusion = f"El modelo acertó en la dirección ({ats_pick_text}) con un error aceptable (Error Absoluto <= 1.0), validando el Pick."
+    elif direction_correct:
+        precision = "Media"
+        conclusion = f"El modelo acertó la dirección ({ats_pick_text}), pero subestimó/sobreestimó el total de goles significativamente (Error Absoluto > 1.0)."
+    else:
+        precision = "Baja"
+        conclusion = "El modelo falló en la dirección principal (Over/Under) del mercado, lo que indica una desviación significativa en las lambdas proyectadas."
+
+
+    return EvaluationOut(
+        home_team=home_team,
+        away_team=away_team,
+        real_score=real_score,
+        total_goals_real=total_goals_real,
+        
+        pick_model=ats_pick_text,
+        line_book=f"Over/Under {line_book}",
+        projection_model=round(proj_total_goals, 2),
+        
+        ats_covered=ats_covered,
+        error_abs=round(error_abs, 2),
+        direction_correct=direction_correct,
+        precision_rating=precision,
+        conclusion=conclusion
+    )
+# 🚀 FIN MEJORA: Endpoint de Evaluación de Rendimiento
