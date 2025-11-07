@@ -40,6 +40,8 @@ type PredictResponse = {
     total_corners_avg: number;
     corners_mlp_pred: number;
   };
+  // 🚀 AÑADIDO: Proyección de goles totales
+  total_goals_proj: number; 
   best_pick: {
     market: "1X2" | "Over 2.5" | "BTTS" | string;
     selection: "1" | "X" | "2" | "Sí" | "No" | string;
@@ -51,10 +53,24 @@ type PredictResponse = {
   debug?: Record<string, unknown>;
 };
 
+// 🚀 AÑADIDO: Tipo para la respuesta de Evaluación de Goles
+type EvaluationResponse = {
+    home_team: string;
+    away_team: string;
+    real_score: string;
+    total_goals_real: number;
+    pick_model: string;
+    line_book: string;
+    projection_model: number;
+    ats_covered: boolean;
+    error_abs: number;
+    direction_correct: boolean;
+    precision_rating: string;
+    conclusion: string;
+};
+
 type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: number };
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
-
-// ELIMINADAS: SubscriptionState, planFromPriceId, LABEL_WEEKLY/MONTHLY/YEARLY
 
 /* ===== Config (entorno) ===== */
 const API_BASE: string =
@@ -71,7 +87,6 @@ const toFloat = (v: unknown) => {
 };
 
 const pct = (n?: number) => (n == null || Number.isNaN(n) ? "—" : `${(+n).toFixed(2)}%`);
-// ELIMINADA: classNames (no se usaba)
 
 /** Guarda estado en localStorage con SSR-safe. (Mantenido por si es útil) */
 function useLocalStorageState<T>(key: string, initial: T) {
@@ -293,7 +308,150 @@ function SkeletonCard() {
   );
 }
 
-// ELIMINADAS: PlanCard, PlansModal (Lógica de planes y pagos eliminada)
+// 🚀 NUEVO COMPONENTE: Modal para Evaluación de Rendimiento de Goles
+function EvaluationModal({
+    open,
+    onClose,
+    data,
+    homeTeam,
+    awayTeam,
+}: {
+    open: boolean;
+    onClose: () => void;
+    data: PredictResponse | null;
+    homeTeam: string;
+    awayTeam: string;
+}) {
+    const [realHomeGoals, setRealHomeGoals] = useState("");
+    const [realAwayGoals, setRealAwayGoals] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+    const [result, setResult] = useState<EvaluationResponse | null>(null);
+
+    const onEvaluate = async () => {
+        const gh = toFloat(realHomeGoals);
+        const ga = toFloat(realAwayGoals);
+
+        if (!data || gh === undefined || ga === undefined || gh < 0 || ga < 0) {
+            setError("Ingresa goles válidos para Local y Visitante (>= 0).");
+            return;
+        }
+
+        setLoading(true);
+        setError("");
+        setResult(null);
+
+        // Intentar deducir el pick y la línea del Over 2.5
+        const isOverPick = data.best_pick.market === "Over 2.5" && data.best_pick.selection === "Sí";
+        const pickMarket = isOverPick ? "Over 2.5" : "Under 2.5";
+        const lineBook = 2.5; // Usamos 2.5 como línea base del mercado analizado en el core
+
+        try {
+            const url = `${API_BASE}/evaluate/goals?` + new URLSearchParams({
+                league: data.league,
+                home_team: data.home_team,
+                away_team: data.away_team,
+                real_home_goals: String(Math.floor(gh)),
+                real_away_goals: String(Math.floor(ga)),
+                proj_total_goals: String(data.total_goals_proj),
+                pick_market: pickMarket, // Enviamos el pick que el modelo considera mejor
+                line_book: String(lineBook),
+            });
+            const res = await fetchJSON<EvaluationResponse>(url, { method: "POST" });
+            setResult(res);
+        } catch (e: any) {
+            setError(e?.message || "Error al evaluar el rendimiento.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (!open) return null;
+
+    const projGoals = data?.total_goals_proj.toFixed(2) || "N/A";
+
+    return (
+        <div
+            role="dialog"
+            aria-modal="true"
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", display: "grid", placeItems: "center", zIndex: 100 }}
+            onClick={onClose}
+        >
+            <div onClick={(e) => e.stopPropagation()} style={{
+                width: "min(600px, 96vw)", maxHeight: "90vh", overflow: "auto",
+                background: "linear-gradient(180deg,#0f172a 0%, #0b1020 100%)",
+                border: "1px solid rgba(255,255,255,.12)", borderRadius: 16, padding: 20
+            }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                    <div style={{ fontSize: 20, fontWeight: 900 }}>📊 Evaluación de Goles</div>
+                    <button onClick={onClose} style={{ ...pill, cursor: "pointer" }}>Cerrar ✕</button>
+                </div>
+                
+                <div style={{ ...panel, marginBottom: 12 }}>
+                    <div style={labelCss}>PROYECCIÓN DEL MODELO (ANTES DEL PARTIDO)</div>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>
+                        {homeTeam} vs {awayTeam}
+                    </div>
+                    <div style={{ fontSize: 24, fontWeight: 900, color: "#a78bfa", marginTop: 4 }}>
+                        Goles Totales Proyectados: {projGoals}
+                    </div>
+                </div>
+
+                {result ? (
+                    // Resultados de la evaluación
+                    <div style={{ ...panel, border: "1px solid #10b981" }}>
+                        <div style={labelCss}>RESULTADO DE LA EVALUACIÓN</div>
+                        <div style={{ fontSize: 28, fontWeight: 900, color: result.precision_rating.includes("Altísima") ? "#22c55e" : result.precision_rating.includes("Baja") ? "#f87171" : "#fbbf24" }}>
+                            Precisión: {result.precision_rating}
+                        </div>
+                        <div style={{ marginTop: 10 }}>
+                            <div style={{...pill}}>
+                                Goles Reales: {result.total_goals_real} ({result.real_score})
+                            </div>
+                            <div style={{...pill, marginLeft: 8}}>
+                                **Error Absoluto:** {result.error_abs}
+                            </div>
+                        </div>
+                        <p style={{ marginTop: 12, lineHeight: 1.5 }}>
+                            {result.conclusion}
+                        </p>
+                        <table style={{ width: '100%', marginTop: 12, fontSize: 13, opacity: 0.8 }}>
+                            <tbody>
+                                <tr><td>Pick del Modelo Evaluado:</td><td>{result.pick_model}</td></tr>
+                                <tr><td>Línea del Mercado Base:</td><td>{result.line_book}</td></tr>
+                                <tr><td>**ATS Cubierto:**</td><td style={{ color: result.ats_covered ? '#22c55e' : '#f87171' }}>**{result.ats_covered ? 'SÍ' : 'NO'}**</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    // Formulario de entrada de resultados
+                    <div style={{ ...panel, marginTop: 12 }}>
+                        <div style={labelCss}>INGRESA EL RESULTADO FINAL PARA EVALUAR</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+                            <div>
+                                <div style={labelCss}>{homeTeam} (Goles Local)</div>
+                                <input type="number" inputMode="numeric" pattern="[0-9]*" style={inputCss} placeholder="Ej: 2" min="0" value={realHomeGoals} onChange={(e) => setRealHomeGoals(e.target.value)} />
+                            </div>
+                            <div>
+                                <div style={labelCss}>{awayTeam} (Goles Visitante)</div>
+                                <input type="number" inputMode="numeric" pattern="[0-9]*" style={inputCss} placeholder="Ej: 1" min="0" value={realAwayGoals} onChange={(e) => setRealAwayGoals(e.target.value)} />
+                            </div>
+                        </div>
+                        {error && <div style={{ color: '#f87171', fontSize: 12, marginTop: 8 }}>{error}</div>}
+                        <button
+                            onClick={onEvaluate}
+                            disabled={loading}
+                            style={{ ...btnPrimary, width: "100%", marginTop: 16, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer" }}
+                        >
+                            {loading ? "Evaluando..." : "Evaluar Precisión de Goles"}
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+// 🚀 FIN NUEVO COMPONENTE
 
 // --- APP PRINCIPAL ---
 export default function App() {
@@ -310,11 +468,13 @@ export default function App() {
   const [data, setData] = useState<PredictResponse | null>(null);
   const [expert, setExpert] = useState(false);
   const [iaOpen, setIaOpen] = useState(false);
-  // ELIMINADO: [plansOpen, setPlansOpen]
   const [topOpen, setTopOpen] = useState(false);
   const [topLoading, setLoadingTop] = useState(false); // Renombrado a setLoadingTop
   const [topErr, setTopErr] = useState("");
   const [topMatches, setTopMatches] = useState<any[]>([]);
+
+  // 🚀 ESTADO AÑADIDO: Modal de Evaluación de Goles
+  const [evalOpen, setEvalOpen] = useState(false);
 
   // ELIMINADO: [premiumKey, setPremiumKey] (Solo se mantiene una clave vacía como placeholder si se requiere)
   const premiumKey = '';
@@ -329,8 +489,6 @@ export default function App() {
 
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-
-  // ELIMINADO: startCheckout, openPortal (Lógica de pagos)
 
   // Función para cerrar modal Intro (sin lógica premium)
   const goFree = useCallback(() => {
@@ -359,8 +517,6 @@ export default function App() {
     }
   }
 
-
-  // ELIMINADOS: useEffects de validación de clave, canjeo de Stripe, y welcome.
 
   // Cargar ligas
   useEffect(() => {
@@ -429,6 +585,8 @@ export default function App() {
             ts: Math.floor(Date.now() / 1000), league, home, away,
             market: json.best_pick.market, selection: json.best_pick.selection,
             prob_pct: json.best_pick.prob_pct, odd, stake: null,
+            // 🚀 AÑADIDO: Guardar la proyección de goles al log
+            total_goals_proj: json.total_goals_proj, 
           }),
         });
       } catch {}
@@ -505,11 +663,11 @@ export default function App() {
 
         {/* Paso 1: Selección */}
         <div style={{ ...panel }}>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <div style={pill}>1️⃣ Selecciona liga y equipos</div>
             <div style={pill}>2️⃣ (Opcional) Ingresar cuotas</div>
             <div style={pill}>3️⃣ Calcular</div>
-          </div>
+            
             {/* Botón Sugeridos (GPT) - Ahora completamente funcional y sin gateo */}
             <button
               onClick={loadTopMatches}
@@ -518,6 +676,7 @@ export default function App() {
             >
               🧠 Sugeridos (ESPN Live)
             </button>
+          </div>
 
           <div className="g3" style={{ marginTop: 12 }}>
             <div>
@@ -588,6 +747,16 @@ export default function App() {
         {data && !loading && (
           <>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              
+              {/* 🚀 BOTÓN AÑADIDO: Evaluación de Goles */}
+              <button
+                onClick={() => setEvalOpen(true)}
+                style={{ ...pill, cursor: "pointer", borderColor: "#3b82f6", background: "linear-gradient(135deg,#3b82f655,#2563eb55)", fontWeight: 900 }}
+                title="Evaluar proyección de goles vs. resultado real"
+              >
+                🎯 Evaluar Goles
+              </button>
+
               <button
                 onClick={() => setStakeOpen(true)}
                 style={{ ...pill, cursor: "pointer", borderColor: "#22c55e", background: "linear-gradient(135deg,#22c55e55,#16a34a55)", fontWeight: 900 }}
@@ -635,6 +804,16 @@ export default function App() {
           />
         )}
 
+        {/* 🚀 MODAL AÑADIDO: Evaluación de Goles */}
+        <EvaluationModal
+            open={evalOpen}
+            onClose={() => setEvalOpen(false)}
+            data={data}
+            homeTeam={home}
+            awayTeam={away}
+        />
+        {/* 🚀 FIN MODAL AÑADIDO */}
+
         {/* Modal: Top Matches (GPT) - Ahora muestra datos de ESPN */}
         {topOpen && (
           <div
@@ -680,6 +859,7 @@ export default function App() {
                           {m.odds && m.odds.X && <span style={pill}>X: {m.odds.X}</span>}
                           {m.odds && m.odds["2"] && <span style={pill}>2: {m.odds["2"]}</span>}
                           {m.odds && m.odds.O2_5 && <span style={pill}>O2.5: {m.odds.O2_5}</span>}
+                          {m.odds && m.odds.BTTS_YES && <span style={pill}>BTTS: {m.odds.BTTS_YES}</span>}
                         </div>
 
                         <div style={{ display: "flex", gap: 8 }}>
