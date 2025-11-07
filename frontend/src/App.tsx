@@ -1,5 +1,3 @@
-// App.tsx (Frontend Limpio - Sin Lógica de Pagos ni UI Premium)
-
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import IntroModal from "./components/IntroModal";
 
@@ -73,10 +71,7 @@ type Odds = { "1"?: number; X?: number; "2"?: number; O2_5?: number; BTTS_YES?: 
 type RawOdds = { "1"?: string; X?: string; "2"?: string; O2_5?: string; BTTS_YES?: string };
 
 /* ===== Config (entorno) ===== */
-const API_BASE: string =
-  (typeof window !== "undefined" && (window as any).__API_BASE__) ||
-  (import.meta as any).env?.VITE_API_BASE_URL ||
-  "http://localhost:8000";
+const API_BASE: string = "http://localhost:8000"; // Usar valor por defecto para compatibilidad
 
 /* ===== Helpers ===== */
 const toFloat = (v: unknown) => {
@@ -120,7 +115,13 @@ async function fetchJSON<T>(url: string, opts: RequestInit = {}): Promise<T> {
     const res = await fetch(url, { ...opts, headers, signal: controller.signal });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(text || `HTTP ${res.status}`);
+      // Intentar parsear el JSON de error de FastAPI si está disponible
+      try {
+        const errorJson = JSON.parse(text);
+        throw new Error(errorJson.detail || `HTTP ${res.status}`);
+      } catch {
+        throw new Error(text || `HTTP ${res.status}`);
+      }
     }
     return (await res.json()) as T;
   } finally {
@@ -322,6 +323,7 @@ function EvaluationModal({
     homeTeam: string;
     awayTeam: string;
 }) {
+    // Usamos string para las entradas para manejar el estado de vacío
     const [realHomeGoals, setRealHomeGoals] = useState("");
     const [realAwayGoals, setRealAwayGoals] = useState("");
     const [loading, setLoading] = useState(false);
@@ -343,6 +345,7 @@ function EvaluationModal({
 
         // Intentar deducir el pick y la línea del Over 2.5
         const isOverPick = data.best_pick.market === "Over 2.5" && data.best_pick.selection === "Sí";
+        // Si el modelo da un pick Over 2.5, asumimos que evaluamos contra ese. Si no, asumimos Under 2.5 (la línea base)
         const pickMarket = isOverPick ? "Over 2.5" : "Under 2.5";
         const lineBook = 2.5; // Usamos 2.5 como línea base del mercado analizado en el core
 
@@ -430,11 +433,29 @@ function EvaluationModal({
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
                             <div>
                                 <div style={labelCss}>{homeTeam} (Goles Local)</div>
-                                <input type="number" inputMode="numeric" pattern="[0-9]*" style={inputCss} placeholder="Ej: 2" min="0" value={realHomeGoals} onChange={(e) => setRealHomeGoals(e.target.value)} />
+                                <input 
+                                  type="number" 
+                                  inputMode="numeric" 
+                                  pattern="[0-9]*" 
+                                  style={inputCss} 
+                                  placeholder="Ej: 2" 
+                                  min="0" 
+                                  value={realHomeGoals} 
+                                  onChange={(e) => setRealHomeGoals(e.target.value)} 
+                                />
                             </div>
                             <div>
                                 <div style={labelCss}>{awayTeam} (Goles Visitante)</div>
-                                <input type="number" inputMode="numeric" pattern="[0-9]*" style={inputCss} placeholder="Ej: 1" min="0" value={realAwayGoals} onChange={(e) => setRealAwayGoals(e.target.value)} />
+                                <input 
+                                  type="number" 
+                                  inputMode="numeric" 
+                                  pattern="[0-9]*" 
+                                  style={inputCss} 
+                                  placeholder="Ej: 1" 
+                                  min="0" 
+                                  value={realAwayGoals} 
+                                  onChange={(e) => setRealAwayGoals(e.target.value)} 
+                                />
                             </div>
                         </div>
                         {error && <div style={{ color: '#f87171', fontSize: 12, marginTop: 8 }}>{error}</div>}
@@ -503,15 +524,23 @@ export default function App() {
     setTopErr("");
     setLoadingTop(true);
     setTopMatches([]);
+    setTopOpen(true); // Abrir el modal inmediatamente, aunque esté vacío.
+    
+    // 🚀 CORRECCIÓN CLAVE: Deseleccionar liga para mostrar sugerencias globales
+    setLeague("");
+    setHome("");
+    setAway("");
+    setOdds({});
+    setRawOdds({});
+    // ----------------------------------------------------------------------
+
     try {
       // Se llama a la API sin el premiumKey en los headers
       const j = await fetchJSON<{ matches?: any[] }>(`${API_BASE}/top-matches`, { method: "GET" }); 
       const matches = Array.isArray(j?.matches) ? j.matches : [];
       setTopMatches(matches);
-      setTopOpen(true);
     } catch (e: any) {
       setTopErr(e?.message || "No pude cargar partidos sugeridos.");
-      setTopOpen(true);
     } finally {
       setLoadingTop(false);
     }
@@ -688,12 +717,26 @@ export default function App() {
             </div>
             <div>
               <div style={labelCss}>Equipo local</div>
-              <input placeholder="Escribe para buscar…" value={home} onChange={(e) => setHome(e.target.value)} list="home_list" style={inputCss} aria-label="Equipo local" />
+              <input 
+                placeholder="Escribe para buscar…" 
+                value={home} 
+                onChange={(e) => setHome(e.target.value)} 
+                list="home_list" 
+                style={inputCss} 
+                aria-label="Equipo local" 
+              />
               <datalist id="home_list">{filteredHome.map((t) => (<option key={t} value={t} />))}</datalist>
             </div>
             <div>
               <div style={labelCss}>Equipo visitante</div>
-              <input placeholder="Escribe para buscar…" value={away} onChange={(e) => setAway(e.target.value)} list="away_list" style={inputCss} aria-label="Equipo visitante" />
+              <input 
+                placeholder="Escribe para buscar…" 
+                value={away} 
+                onChange={(e) => setAway(e.target.value)} 
+                list="away_list" 
+                style={inputCss} 
+                aria-label="Equipo visitante" 
+              />
               <datalist id="away_list">{filteredAway.map((t) => (<option key={t} value={t} />))}</datalist>
             </div>
           </div>
@@ -771,8 +814,12 @@ export default function App() {
                   if (odds["1"] || odds.X || odds["2"] || odds.O2_5 || odds.BTTS_YES) body.odds = odds;
                   try {
                     // Endpoint sin restricción Premium
-                    await fetchJSON(`${API_BASE}/alerts/value-pick`, { method: "POST", body: JSON.stringify(body) }); 
-                    alert("Enviado (si cumple umbrales).");
+                    const res = await fetchJSON<any>(`${API_BASE}/alerts/value-pick`, { method: "POST", body: JSON.stringify(body) }); 
+                    if (res?.qualifies) {
+                        alert(`¡Alerta enviada! Pick de valor esperado positivo (+${(res.edge * 100).toFixed(2)}%)`);
+                    } else {
+                        alert("El pick no cumple con el umbral de valor esperado positivo (>= 2%).");
+                    }
                   } catch (e: any) {
                     alert(e?.message || "No se pudo enviar la alerta.");
                   }
@@ -786,7 +833,7 @@ export default function App() {
 
             <div style={{ marginTop: 12 }}>
               <ErrorBoundary>
-                <BestPickPro data={data} odds={odds} />
+                <BestPickPro data={data} odds={odds} expert={expert} />
               </ErrorBoundary>
             </div>
           </>
@@ -833,7 +880,9 @@ export default function App() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <div style={{ fontSize: 20, fontWeight: 900 }}>🧠 Partidos sugeridos (ESPN Live)</div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <div style={{ ...pill, opacity: 0.9 }}>Servicio Activo</div>
+                  <button onClick={loadTopMatches} disabled={topLoading} style={{ ...pill, opacity: 0.9 }}>
+                    {topLoading ? 'Recargando...' : 'Recargar'}
+                  </button>
                   <button onClick={() => setTopOpen(false)} style={{ ...pill, cursor: "pointer" }}>Cerrar ✕</button>
                 </div>
               </div>
@@ -843,7 +892,7 @@ export default function App() {
 
               {!topLoading && !topErr && (
                 <div style={{ display: "grid", gap: 12 }}>
-                  {topMatches.length === 0 && <div style={{ ...pill }}>No hay sugerencias disponibles para la liga por defecto.</div>}
+                  {topMatches.length === 0 && <div style={{ ...pill }}>No hay partidos activos en ESPN para hoy.</div>}
                   {topMatches.map((m: any, i: number) => (
                     <div key={i} style={{ border: "1px solid rgba(255,255,255,.06)", borderRadius: 12, padding: 12 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -868,7 +917,7 @@ export default function App() {
                               // Rellenar equipos
                               setHome(m.home_team || "");
                               setAway(m.away_team || "");
-                              setLeague(m.league || "");
+                              setLeague(m.league || ""); // Se rellena la liga de ESPN
                               // Rellenar cuotas obtenidas
                               setOdds(m.odds || {});
                               setRawOdds(m.odds ? Object.fromEntries(Object.entries(m.odds).map(([k, v]) => [k, String(v)])) : {});
