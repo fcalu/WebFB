@@ -1,5 +1,3 @@
-# backend/app.py (CÓDIGO COMPLETO CON INTEGRACIÓN ESPN Y EVALUACIÓN DE GOLES)
-# === stdlib ===
 import os, sys, time, glob, math, re, secrets, sqlite3
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone, timedelta
@@ -13,24 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, JSONResponse
 from pydantic import BaseModel, Field
 import requests
-
-# === OpenAI / retry ===
 from openai import OpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt
 from fastapi import FastAPI, HTTPException, Query
-
-# === sklearn (opcional) ===
-try:
-    from sklearn.linear_model import LogisticRegression
-    SKLEARN_OK = True
-except Exception:
-    SKLEARN_OK = False
 
 # Asumiendo que 'top_matches_payload' existe
 try:
     from top_matches import top_matches_payload
 except ImportError:
-    # --- INTEGRACIÓN DE ESPN (fallback local) ---
     def top_matches_payload(date: Optional[str] = None):
         """
         Obtiene los partidos principales y sus cuotas (si están disponibles) de ESPN.
@@ -39,6 +27,7 @@ except ImportError:
         target_date = date if date else datetime.now(timezone.utc).strftime("%Y%m%d")
         
         # Usamos el endpoint de soccer/all para obtener todas las ligas disponibles para ese día
+        # y así replicar el comportamiento que tenía tu frontend.
         ESPN_URL = f"http://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates={target_date}"
         
         try:
@@ -59,30 +48,49 @@ except ImportError:
         for event_container in data.get("events", []):
             event = event_container.get("competitions", [{}])[0]
             
-            # Intentamos obtener la liga (ej: 'eng.1', 'esp.1')
-            league_name = event.get("league", {}).get("name", "Desconocida")
-            
-            # Nombres de equipos
-            home_team = event.get("competitors", [{}, {}])[0].get("team", {}).get("name", "N/A")
-            away_team = event.get("competitors", [{}, {}])[1].get("team", {}).get("name", "N/A")
+            # --- MEJORA EN LA EXTRACCIÓN DE LIGA ---
+            league_name = event.get("league", {}).get("name") 
+            if not league_name:
+                # Fallback al slug de temporada, ej: '2025-26-laliga' -> LaLiga
+                slug = event_container.get("season", {}).get("slug", "")
+                if slug:
+                    league_name = slug.split("-")[-1].replace('laliga', 'La Liga').replace('premierleague', 'Premier League').title()
+                else:
+                    league_name = "Desconocida"
+            # ---------------------------------------
 
-            # CORRECCIÓN APLICADA: Se eliminó el filtro estricto. Solo verificamos equipos válidos.
-            if home_team == "N/A" or away_team == "N/A": 
-                continue 
+            # Filtramos solo eventos que tengan al menos dos competidores definidos
+            if len(event.get("competitors", [])) < 2: continue
+
+            # Nombres de equipos
+            # El equipo local (home) es siempre competitors[0] y visitante (away) es competitors[1]
+            # Usamos .get("team", {}).get("displayName", ...) si está disponible, si no, .get("name")
+            home_team_data = event["competitors"][0].get("team", {})
+            away_team_data = event["competitors"][1].get("team", {})
+
+            home_team = home_team_data.get("displayName", home_team_data.get("name", "N/A"))
+            away_team = away_team_data.get("displayName", away_team_data.get("name", "N/A"))
 
             # Cuotas (Odds) - Asumimos que están en el primer pronóstico de apuestas
             odds_raw = {}
             odds_list = event.get("odds", [])
             if odds_list:
                 provider = odds_list[0]
-                # Mapeo de ESPN a tus claves (1, X, 2, O2_5, BTTS_YES)
+                # Mapeo de ESPN a tus claves (1, X, 2)
                 for selection in provider.get("spreads", []) + provider.get("moneyline", []):
                     label = selection.get("label", "")
                     if label == "1": odds_raw["1"] = selection.get("value")
                     elif label == "X": odds_raw["X"] = selection.get("value")
                     elif label == "2": odds_raw["2"] = selection.get("value")
                 
-                # Por simplicidad, solo incluimos 1X2, ya que BTTS/O2.5 varía mucho en ESPN
+                # Para Over/Under y BTTS tendríamos que buscar en otros endpoints o en spreads/totals, 
+                # pero para mantenerlo simple y funcional con los datos que tenemos:
+                # Buscamos Total Goals (O2.5/U2.5) en "totals"
+                for total in provider.get("totals", []):
+                    if total.get("overOdds") and total.get("underOdds"):
+                        # Usamos la primera línea de total goals que encontremos, asumiendo 2.5
+                        odds_raw["O2_5"] = total.get("overOdds")
+                        break 
                 
             matches_out.append({
                 "league": league_name,
@@ -97,7 +105,13 @@ except ImportError:
             "date": target_date,
             "warning": None,
         }
-    # ----------------------------------------------------
+
+# === sklearn (opcional) ===
+try:
+    from sklearn.linear_model import LogisticRegression
+    SKLEARN_OK = True
+except Exception:
+    SKLEARN_OK = False
 
 
 # --- CONFIGURACIÓN GLOBAL ---
@@ -107,13 +121,13 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 # --------------------------------------------------------------------------------------
 # Feature flags y parámetros
 # --------------------------------------------------------------------------------------
-USE_DIXON_COLES       = os.getenv("USE_DIXON_COLES", "0") == "1"
-DC_RHO                = float(os.getenv("DC_RHO", "0.10"))
-USE_CALIBRATION       = os.getenv("USE_CALIBRATION", "0") == "1"
-MARKET_WEIGHT         = float(os.getenv("MARKET_WEIGHT", "0.35"))
-USE_CACHED_RATINGS    = os.getenv("USE_CACHED_RATINGS", "1") == "1"
-CACHE_TTL_SECONDS     = int(os.getenv("CACHE_TTL_SECONDS", "600"))
-EXPOSE_DEBUG          = os.getenv("EXPOSE_DEBUG", "0") == "1"
+USE_DIXON_COLES 	  = os.getenv("USE_DIXON_COLES", "0") == "1"
+DC_RHO 	 	     = float(os.getenv("DC_RHO", "0.10"))
+USE_CALIBRATION 	  = os.getenv("USE_CALIBRATION", "0") == "1"
+MARKET_WEIGHT 	 	= float(os.getenv("MARKET_WEIGHT", "0.35"))
+USE_CACHED_RATINGS 	= os.getenv("USE_CACHED_RATINGS", "1") == "1"
+CACHE_TTL_SECONDS 	= int(os.getenv("CACHE_TTL_SECONDS", "600"))
+EXPOSE_DEBUG 	 	 = os.getenv("EXPOSE_DEBUG", "0") == "1"
 # === IA Boot flags ===
 IABOOT_ON = os.getenv("IABOOT_ON", "0") == "1"
 IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-4o")
@@ -230,13 +244,13 @@ def dixon_coles_soft(M: np.ndarray, rho: float) -> np.ndarray:
 def matrix_1x2_o25_btts(M: np.ndarray) -> Dict[str, float]:
     """Agrega la matriz a probabilidades de 1/X/2, Over2.5 y BTTS."""
     kmax = M.shape[0] - 1
-    home = float(np.tril(M, -1).sum())        # i > j
-    draw = float(np.trace(M))                # i == j
-    away = float(np.triu(M, 1).sum())          # i < j
+    home = float(np.tril(M, -1).sum()) 		# i > j
+    draw = float(np.trace(M)) 			# i == j
+    away = float(np.triu(M, 1).sum()) 			# i < j
     over25 = float(sum(M[i, j] for i in range(kmax + 1)
-                                     for j in range(kmax + 1) if (i + j) >= 3))
+                                      for j in range(kmax + 1) if (i + j) >= 3))
     btts = float(sum(M[i, j] for i in range(1, kmax + 1)
-                                     for j in range(1, kmax + 1)))
+                                      for j in range(1, kmax + 1)))
     # Top scorelines
     pairs = [((i, j), float(M[i, j])) for i in range(kmax + 1) for j in range(kmax + 1)]
     pairs.sort(key=lambda x: x[1], reverse=True)
@@ -395,7 +409,7 @@ class LeagueStore:
         y_home = []
         y_draw = []
         y_away = []
-        y_o25  = []
+        y_o25 	= []
         y_btts = []
 
         for _, r in rows.iterrows():
@@ -482,10 +496,10 @@ def _db():
     conn.row_factory = sqlite3.Row
     return conn
 
-# 🚀 CORRECCIÓN: Asegurar que la tabla 'history' incluye el campo 'total_goals_proj'
 def init_db():
     conn = _db()
     cur = conn.cursor()
+    # 📝 IMPORTANTE: Se asegura que la columna total_goals_proj exista
     cur.execute("""
     CREATE TABLE IF NOT EXISTS history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -499,19 +513,15 @@ def init_db():
       odd REAL,
       stake REAL,
       result TEXT DEFAULT 'pending',
-      total_goals_proj REAL
+      total_goals_proj REAL DEFAULT NULL 
     )
     """)
-    # Si la tabla ya existía, añadimos la columna 'total_goals_proj' si falta
-    try:
-        cur.execute("ALTER TABLE history ADD COLUMN total_goals_proj REAL")
-    except sqlite3.OperationalError:
-        pass # La columna ya existe
-        
     conn.commit()
     conn.close()
 
 init_db()
+
+# ELIMINADO: init_premium_db, premium_upsert, premium_find_by_key, premium_find_or_create_for_customer, _derive_cpe_from_sub
 
 # Cache simple (clave → (ts, data))
 _CACHE: Dict[str, Tuple[float, dict]] = {}
@@ -619,6 +629,8 @@ class BuilderOut(BaseModel):
     combo_prob_pct: float
     summary: str
     debug: Optional[Dict[str, float]] = None
+
+# ELIMINADO: CheckoutIn
 
 # ===== IA Boot (salida estructurada) =====
 class IABootLeg(BaseModel):
@@ -730,7 +742,8 @@ def _call_openai_structured(model: str, temperature: float, schema: dict, messag
 @app.get("/top-matches")
 def top_matches(date: str | None = Query(default=None)):
     try:
-        # Aquí se llama a la función con la integración de ESPN
+        # Asumiendo que 'top_matches_payload' es una función de utilidades externa
+        # que no depende de la lógica de pagos.
         return top_matches_payload(date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -839,7 +852,7 @@ def _choose_best_pick(probs_pct: Dict[str, float], odds: Optional[Dict[str, floa
     any_odds = odds and any(odds.get(k) for k in ("1","X","2","O2_5","BTTS_YES"))
     if any_odds:
         if all(ev is None for _,_,_,ev in cands):
-            best = max(cands, key=lambda x: x[2])  # por prob
+            best = max(cands, key=lambda x: x[2]) 	# por prob
         else:
             best = max(cands, key=lambda x: (x[3] if x[3] is not None else -1e9))
     else:
@@ -907,7 +920,7 @@ def predict_core(store: "LeagueStore", home: str, away: str, odds: Optional[Dict
         "away_win_pct": round(p2*100.0, 2),
         "over_2_5_pct": round(po*100.0, 2),
         "btts_pct": round(pb*100.0, 2),
-        "top_scorelines": agg["top_scorelines"],  # útil para debug
+        "top_scorelines": agg["top_scorelines"], 	# útil para debug
     }
 
     # 7) Medias adicionales (córners/tarjetas)
@@ -958,30 +971,47 @@ def predict_core(store: "LeagueStore", home: str, away: str, odds: Optional[Dict
     }
 
 # (Opcional) helpers para IABoot (Se mantienen)
-def _canon_market_selection(raw_mkt: str, raw_sel: str, home_name: str, away_name: str) -> Tuple[str, str, str, str]:
-    # Normalización del mercado (canonización)
-    if "2.5" in raw_mkt:
-        market_c = "Over 2.5" if "Over" in raw_mkt or "Más" in raw_mkt else "UNDER_2_5"
-    elif "BTTS" in raw_mkt or "Ambos" in raw_mkt:
-        market_c = "BTTS"
+def _canon_market_selection(mkt: str, sel: str, home_name: str, away_name: str) -> tuple[str, str, str, str]:
+    mkt = mkt.lower().strip()
+    sel = sel.lower().strip()
+
+    ui_mkt = mkt
+    ui_sel = sel
+
+    if "1x2" in mkt or "ganador" in mkt:
+        canon_mkt = "1X2"
+        if sel in ("1", "local", home_name.lower()):
+            canon_sel = "1"; ui_sel = "1"
+        elif sel in ("2", "visitante", away_name.lower()):
+            canon_sel = "2"; ui_sel = "2"
+        else:
+            canon_sel = "X"; ui_sel = "X"
+        ui_mkt = "1X2"
+    elif "over" in mkt or "más de" in mkt:
+        canon_mkt = "Over 2.5"
+        canon_sel = "Sí"
+        ui_mkt = "Over 2.5"
+        ui_sel = "Sí"
+    elif "under" in mkt or "menos de" in mkt:
+        canon_mkt = "UNDER_2_5"
+        canon_sel = "No"
+        ui_mkt = "Under 2.5"
+        ui_sel = "No"
+    elif "btts" in mkt or "ambos" in mkt:
+        canon_mkt = "BTTS"
+        if sel in ("sí", "si", "yes"):
+            canon_sel = "Sí"; ui_sel = "Sí"
+        else:
+            canon_sel = "No"; ui_sel = "No"
+        ui_mkt = "BTTS"
     else:
-        market_c = "1X2" # Default
-
-    # Normalización de la selección (canonización)
-    sel_c = "Sí" if "Sí" in raw_sel or "Yes" in raw_sel else "No" if "No" in raw_sel else raw_sel
-
-    if market_c == "1X2":
-        if "local" in raw_sel.lower() or raw_sel == "1": sel_c = "1"
-        elif "visitante" in raw_sel.lower() or raw_sel == "2": sel_c = "2"
-        elif "empate" in raw_sel.lower() or raw_sel == "X": sel_c = "X"
+        # Fallback to 1X2 1
+        canon_mkt = "1X2"
+        canon_sel = "1"
+        ui_mkt = mkt
+        ui_sel = sel
     
-    # Formato UI
-    ui_market = market_c.replace("UNDER_2_5", "Under 2.5")
-    ui_selection = sel_c.replace("1", "Gana Local").replace("2", "Gana Visitante").replace("X", "Empate")
-    if ui_market == "BTTS":
-        ui_market = "Ambos Marcan"
-
-    return market_c, sel_c, ui_market, ui_selection
+    return canon_mkt, canon_sel, ui_mkt, ui_sel
 
 
 def _recent_form_snippet(store: "LeagueStore", home: str, away: str, n: int = 6) -> str:
@@ -994,7 +1024,7 @@ def _iaboot_schema() -> dict:
         "schema": {
             "type": "object",
             "properties": {
-                "match":  {"type": "string"},
+                "match": 	{"type": "string"},
                 "league": {"type": "string"},
                 "summary":{"type": "string"},
                 "picks": {
@@ -1012,9 +1042,9 @@ def _iaboot_schema() -> dict:
                                 "type": "string",
                                 "enum": ["1","X","2","Sí","No"]
                             },
-                            "prob_pct":  {"type": "number", "minimum": 0, "maximum": 100},
+                            "prob_pct": 	{"type": "number", "minimum": 0, "maximum": 100},
                             "confidence": {"type": "number", "minimum": 0, "maximum": 100},
-                            "rationale":  {"type": "string"}
+                            "rationale": 	{"type": "string"}
                         },
                         "required": ["market","selection","prob_pct","confidence"]
                     }
@@ -1041,10 +1071,10 @@ def _iaboot_messages(pred: PredictOut, odds: dict | None, form_text: str) -> tup
     user_msg = (
         f"Partido: {pred.home_team} vs {pred.away_team} en {pred.league}.\n"
         f"Probabilidades del modelo (%%):\n"
-        f"- 1: {pred.probs['home_win_pct']}    X: {pred.probs['draw_pct']}    2: {pred.probs['away_win_pct']}\n"
+        f"- 1: {pred.probs['home_win_pct']} 	X: {pred.probs['draw_pct']} 	2: {pred.probs['away_win_pct']}\n"
         f"- Over 2.5: {pred.probs['over_2_5_pct']}\n"
         f"- BTTS Sí: {pred.probs['btts_pct']}\n\n"
-        f"Lambdas Poisson: local={pred.poisson.get('home_lambda')}    visitante={pred.poisson.get('away_lambda')}\n"
+        f"Lambdas Poisson: local={pred.poisson.get('home_lambda')} 	visitante={pred.poisson.get('away_lambda')}\n"
         f"Marcadores más probables (top-5): {top}\n"
         f"Cuotas (si hay): {odds_text}\n"
         f"Contexto breve: {form_text or 'N/A'}\n\n"
@@ -1070,9 +1100,9 @@ def builder_suggest(inp: BuilderIn, request: Request):
     ))
 
     # --- Probabilidades ya blendeadas ---
-    p1  = pred.probs["home_win_pct"] / 100.0
-    px  = pred.probs["draw_pct"] / 100.0
-    p2  = pred.probs["away_win_pct"] / 100.0
+    p1 	= pred.probs["home_win_pct"] / 100.0
+    px 	= pred.probs["draw_pct"] / 100.0
+    p2 	= pred.probs["away_win_pct"] / 100.0
     po25 = pred.probs["over_2_5_pct"] / 100.0
     pbtts = pred.probs["btts_pct"] / 100.0
 
@@ -1085,7 +1115,7 @@ def builder_suggest(inp: BuilderIn, request: Request):
 
     # Medias para córners y tarjetas
     lam_corners = float(pred.averages.get("total_corners_avg", 9.0) or 9.0)
-    lam_cards   = float(pred.averages.get("total_yellow_cards_avg", 4.5) or 4.5)
+    lam_cards 	= float(pred.averages.get("total_yellow_cards_avg", 4.5) or 4.5)
 
     picks: List[BuilderLegOut] = []
     flags = {"has_over": False, "has_btts": False, "has_1x2": False}
@@ -1115,7 +1145,7 @@ def builder_suggest(inp: BuilderIn, request: Request):
         added_goals = True
     else:
         # Under 3.5 si pinta cerrado
-        p_u35 = p_under_xdot5(lam_sum, 3.5)      # <=3 goles
+        p_u35 = p_under_xdot5(lam_sum, 3.5) 		# <=3 goles
         if p_u35 >= 0.59 and lam_sum <= 2.4:
             picks.append(BuilderLegOut(market="Goles", selection="Menos de 3.5", prob_pct=round(p_u35*100,2)))
             added_goals = True
@@ -1123,7 +1153,7 @@ def builder_suggest(inp: BuilderIn, request: Request):
 
     # ---- 4) Córners (elige la línea MÁS alta que cruce 60%) ----
     best_corners = None
-    for line in [9.5, 8.5, 7.5]:     # probamos de alta a baja; elegimos la primera que pase
+    for line in [9.5, 8.5, 7.5]: 		# probamos de alta a baja; elegimos la primera que pase
         p_over = p_over_xdot5(lam_corners, line)
         if p_over >= 0.60:
             best_corners = (line, p_over)
@@ -1143,10 +1173,10 @@ def builder_suggest(inp: BuilderIn, request: Request):
     # orden preferente según λ
     if lam_cards <= 4.8:
         # under-friendly: priorizamos los under
-        cands.sort(key=lambda x: (("Menos" not in x[0]), -x[1]))   # under primero, luego prob desc
+        cands.sort(key=lambda x: (("Menos" not in x[0]), -x[1])) 	# under primero, luego prob desc
     else:
         # over-friendly
-        cands.sort(key=lambda x: (("Más" not in x[0]), -x[1]))     # over primero
+        cands.sort(key=lambda x: (("Más" not in x[0]), -x[1])) 		# over primero
     for sel, p in cands:
         if p >= 0.60:
             best_cards = (sel, p)
@@ -1167,16 +1197,16 @@ def builder_suggest(inp: BuilderIn, request: Request):
         prod *= p
 
     k = len(probs01)
-    prod_adj = prod * (0.92 ** max(0, k-1))        # penalización general por múltiples
+    prod_adj = prod * (0.92 ** max(0, k-1)) 			# penalización general por múltiples
 
     has_over = any(p.market=="Goles" and "Más de 2.5" in p.selection for p in picks)
     has_btts = any(p.market=="BTTS" and "Sí" in p.selection for p in picks)
-    has_1x2  = any(p.market in ("Ganador","Doble oportunidad") for p in picks)
+    has_1x2 	= any(p.market in ("Ganador","Doble oportunidad") for p in picks)
 
     if has_over and has_btts:
-        prod_adj *= 0.88      # correlación fuerte
+        prod_adj *= 0.88 		# correlación fuerte
     if has_1x2 and has_over:
-        prod_adj *= 0.95      # algo correlacionados
+        prod_adj *= 0.95 		# algo correlacionados
 
     prod_adj = clamp01(prod_adj)
 
@@ -1186,7 +1216,7 @@ def builder_suggest(inp: BuilderIn, request: Request):
     # Resumen legible
     nice = ", ".join([f"{p.market}: {p.selection}" for p in picks]) or "—"
     summary = (f"Selección combinada para {inp.home_team} vs {inp.away_team}: "
-               f"{combo_pct}% (cuota justa {fair_odds}). {nice}")
+            f"{combo_pct}% (cuota justa {fair_odds}). {nice}")
 
     return BuilderOut(
         legs=picks,
@@ -1235,9 +1265,9 @@ def iaboot_predict(inp: PredictIn, request: Request):
             picks=[IABootLeg(
                 market=pred.best_pick.market,
                 selection=("Gana local" if pred.best_pick.selection=="1"
-                              else "Gana visitante" if pred.best_pick.selection=="2"
-                              else "Empate" if pred.best_pick.selection=="X"
-                              else pred.best_pick.selection),
+                                else "Gana visitante" if pred.best_pick.selection=="2"
+                                else "Empate" if pred.best_pick.selection=="X"
+                                else pred.best_pick.selection),
                 prob_pct=pred.best_pick.prob_pct,
                 confidence=pred.best_pick.confidence,
                 rationale="Basado en Poisson calibrado y blend con mercado.",
@@ -1269,7 +1299,7 @@ def iaboot_predict(inp: PredictIn, request: Request):
         raw_mkt = p.get("market","")
         raw_sel = p.get("selection","")
 
-        market_c, sel_c, ui_market, ui_selection = _canon_market_selection(raw_mkt, raw_sel, home_name, away_name)
+        market_c, sel_c, ui_mkt, ui_sel = _canon_market_selection(raw_mkt, raw_sel, home_name, away_name)
 
         # Probabilidad base del modelo
         if market_c == "1X2":
@@ -1283,7 +1313,7 @@ def iaboot_predict(inp: PredictIn, request: Request):
             p_base = float(pred.probs.get("over_2_5_pct", 0.0))
         elif market_c == "UNDER_2_5":
             p_base = 100.0 - float(pred.probs.get("over_2_5_pct", 0.0))
-        else:  # BTTS
+        else: 	# BTTS
             if sel_c == "Sí":
                 p_base = float(pred.probs.get("btts_pct", 0.0))
             else:
@@ -1303,8 +1333,8 @@ def iaboot_predict(inp: PredictIn, request: Request):
         conf_final = conf_ia if conf_ia >= 0.01 else max(0.0, min(100.0, abs(p_final - 50.0) * 2.0))
 
         picks.append(IABootLeg(
-            market=ui_market,
-            selection=ui_selection,
+            market=ui_mkt,
+            selection=ui_sel,
             prob_pct=round(p_final, 2),
             confidence=round(conf_final, 2),
             rationale=p.get("rationale",""),
@@ -1391,8 +1421,7 @@ class HistoryLogIn(BaseModel):
 def history_log(item: HistoryLogIn):
     ts = item.ts or int(time.time())
     conn = _db()
-    
-    # 🚀 CORRECCIÓN: Se actualiza el INSERT para guardar el nuevo campo 'total_goals_proj'
+    # 📝 Se actualiza el INSERT para guardar el nuevo campo 'total_goals_proj'
     conn.execute(
         """INSERT INTO history(ts, league, home, away, market, selection, prob_pct, odd, stake, total_goals_proj)
            VALUES (?,?,?,?,?,?,?,?,?,?)""",
@@ -1432,7 +1461,7 @@ def alerts_value_pick(inp: ValuePickIn, request: Request):
     used_odd = _leg_used_odd_for_pick(pred, inp.odds) if inp.odds else None
     p = (pred.best_pick.prob_pct or 0.0) / 100.0
     edge = (p * used_odd - 1.0) if (used_odd and used_odd > 1.0) else None
-    qualifies = (edge is not None and edge >= 0.02)  # umbral 2% de valor esperado
+    qualifies = (edge is not None and edge >= 0.02) 	# umbral 2% de valor esperado
 
     # Aquí podrías integrar Telegram/email si qualifies == True
     return {"ok": True, "qualifies": qualifies, "edge": round(edge, 4) if edge is not None else None}
