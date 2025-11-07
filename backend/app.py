@@ -1,4 +1,4 @@
-# backend/app.py (CÓDIGO COMPLETO Y LIMPIO CON MEJORA DE EVALUACIÓN DE RENDIMIENTO)
+# backend/app.py (CÓDIGO COMPLETO CON INTEGRACIÓN ESPN Y EVALUACIÓN DE GOLES)
 # === stdlib ===
 import os, sys, time, glob, math, re, secrets, sqlite3
 from typing import Dict, List, Optional, Tuple
@@ -12,15 +12,7 @@ from fastapi import FastAPI, HTTPException, Request, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, JSONResponse
 from pydantic import BaseModel, Field
-# import stripe # ELIMINADO
 import requests
-# Asumiendo que 'top_matches_payload' existe
-try:
-    from top_matches import top_matches_payload
-except ImportError:
-    # Definición de stub si el módulo externo no existe
-    def top_matches_payload(date: Optional[str] = None):
-        return {"matches": [], "date": date or str(datetime.now().date()), "warning": "top_matches_payload STUB"}
 
 # === OpenAI / retry ===
 from openai import OpenAI
@@ -34,6 +26,79 @@ try:
 except Exception:
     SKLEARN_OK = False
 
+# Asumiendo que 'top_matches_payload' existe
+try:
+    from top_matches import top_matches_payload
+except ImportError:
+    # --- INTEGRACIÓN DE ESPN (fallback local) ---
+    def top_matches_payload(date: Optional[str] = None):
+        """
+        Obtiene los partidos principales y sus cuotas (si están disponibles) de ESPN.
+        Usa el endpoint de Soccer Scoreboard para la fecha actual o especificada.
+        """
+        target_date = date if date else datetime.now(timezone.utc).strftime("%Y%m%d")
+        
+        # Usamos el endpoint de soccer/all para obtener todas las ligas disponibles para ese día
+        ESPN_URL = f"http://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates={target_date}"
+        
+        try:
+            response = requests.get(ESPN_URL, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            # En caso de error de conexión o API, devolvemos un stub
+            return {
+                "matches": [],
+                "date": target_date,
+                "warning": f"Error al cargar ESPN API: {e}",
+            }
+
+        matches_out = []
+        
+        # La estructura de la respuesta de ESPN es compleja (unidades -> eventos)
+        for event_container in data.get("events", []):
+            event = event_container.get("competitions", [{}])[0]
+            
+            # Intentamos obtener la liga (ej: 'eng.1', 'esp.1')
+            league_name = event.get("league", {}).get("name", "Desconocida")
+            
+            # Nombres de equipos
+            home_team = event.get("competitors", [{}, {}])[0].get("team", {}).get("name", "N/A")
+            away_team = event.get("competitors", [{}, {}])[1].get("team", {}).get("name", "N/A")
+
+            # CORRECCIÓN APLICADA: Se eliminó el filtro estricto. Solo verificamos equipos válidos.
+            if home_team == "N/A" or away_team == "N/A": 
+                continue 
+
+            # Cuotas (Odds) - Asumimos que están en el primer pronóstico de apuestas
+            odds_raw = {}
+            odds_list = event.get("odds", [])
+            if odds_list:
+                provider = odds_list[0]
+                # Mapeo de ESPN a tus claves (1, X, 2, O2_5, BTTS_YES)
+                for selection in provider.get("spreads", []) + provider.get("moneyline", []):
+                    label = selection.get("label", "")
+                    if label == "1": odds_raw["1"] = selection.get("value")
+                    elif label == "X": odds_raw["X"] = selection.get("value")
+                    elif label == "2": odds_raw["2"] = selection.get("value")
+                
+                # Por simplicidad, solo incluimos 1X2, ya que BTTS/O2.5 varía mucho en ESPN
+                
+            matches_out.append({
+                "league": league_name,
+                "home_team": home_team,
+                "away_team": away_team,
+                "date": event.get("date"),
+                "odds": odds_raw if len(odds_raw) > 0 else None,
+            })
+
+        return {
+            "matches": matches_out[:8], # Limitar a 8 como en tu stub original
+            "date": target_date,
+            "warning": None,
+        }
+    # ----------------------------------------------------
+
 
 # --- CONFIGURACIÓN GLOBAL ---
 DOMAIN = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
@@ -42,13 +107,13 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 # --------------------------------------------------------------------------------------
 # Feature flags y parámetros
 # --------------------------------------------------------------------------------------
-USE_DIXON_COLES      = os.getenv("USE_DIXON_COLES", "0") == "1"
-DC_RHO               = float(os.getenv("DC_RHO", "0.10"))
-USE_CALIBRATION      = os.getenv("USE_CALIBRATION", "0") == "1"
-MARKET_WEIGHT        = float(os.getenv("MARKET_WEIGHT", "0.35"))
-USE_CACHED_RATINGS   = os.getenv("USE_CACHED_RATINGS", "1") == "1"
-CACHE_TTL_SECONDS    = int(os.getenv("CACHE_TTL_SECONDS", "600"))
-EXPOSE_DEBUG         = os.getenv("EXPOSE_DEBUG", "0") == "1"
+USE_DIXON_COLES       = os.getenv("USE_DIXON_COLES", "0") == "1"
+DC_RHO                = float(os.getenv("DC_RHO", "0.10"))
+USE_CALIBRATION       = os.getenv("USE_CALIBRATION", "0") == "1"
+MARKET_WEIGHT         = float(os.getenv("MARKET_WEIGHT", "0.35"))
+USE_CACHED_RATINGS    = os.getenv("USE_CACHED_RATINGS", "1") == "1"
+CACHE_TTL_SECONDS     = int(os.getenv("CACHE_TTL_SECONDS", "600"))
+EXPOSE_DEBUG          = os.getenv("EXPOSE_DEBUG", "0") == "1"
 # === IA Boot flags ===
 IABOOT_ON = os.getenv("IABOOT_ON", "0") == "1"
 IABOOT_MODEL = os.getenv("IABOOT_MODEL", "gpt-4o")
@@ -417,6 +482,7 @@ def _db():
     conn.row_factory = sqlite3.Row
     return conn
 
+# 🚀 CORRECCIÓN: Asegurar que la tabla 'history' incluye el campo 'total_goals_proj'
 def init_db():
     conn = _db()
     cur = conn.cursor()
@@ -432,15 +498,20 @@ def init_db():
       prob_pct REAL,
       odd REAL,
       stake REAL,
-      result TEXT DEFAULT 'pending'
+      result TEXT DEFAULT 'pending',
+      total_goals_proj REAL
     )
     """)
+    # Si la tabla ya existía, añadimos la columna 'total_goals_proj' si falta
+    try:
+        cur.execute("ALTER TABLE history ADD COLUMN total_goals_proj REAL")
+    except sqlite3.OperationalError:
+        pass # La columna ya existe
+        
     conn.commit()
     conn.close()
 
 init_db()
-
-# ELIMINADO: init_premium_db, premium_upsert, premium_find_by_key, premium_find_or_create_for_customer, _derive_cpe_from_sub
 
 # Cache simple (clave → (ts, data))
 _CACHE: Dict[str, Tuple[float, dict]] = {}
@@ -548,8 +619,6 @@ class BuilderOut(BaseModel):
     combo_prob_pct: float
     summary: str
     debug: Optional[Dict[str, float]] = None
-
-# ELIMINADO: CheckoutIn
 
 # ===== IA Boot (salida estructurada) =====
 class IABootLeg(BaseModel):
@@ -661,8 +730,7 @@ def _call_openai_structured(model: str, temperature: float, schema: dict, messag
 @app.get("/top-matches")
 def top_matches(date: str | None = Query(default=None)):
     try:
-        # Asumiendo que 'top_matches_payload' es una función de utilidades externa
-        # que no depende de la lógica de pagos.
+        # Aquí se llama a la función con la integración de ESPN
         return top_matches_payload(date)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -890,7 +958,31 @@ def predict_core(store: "LeagueStore", home: str, away: str, odds: Optional[Dict
     }
 
 # (Opcional) helpers para IABoot (Se mantienen)
-# ... [_recent_form_snippet, _iaboot_schema, _iaboot_messages] ...
+def _canon_market_selection(raw_mkt: str, raw_sel: str, home_name: str, away_name: str) -> Tuple[str, str, str, str]:
+    # Normalización del mercado (canonización)
+    if "2.5" in raw_mkt:
+        market_c = "Over 2.5" if "Over" in raw_mkt or "Más" in raw_mkt else "UNDER_2_5"
+    elif "BTTS" in raw_mkt or "Ambos" in raw_mkt:
+        market_c = "BTTS"
+    else:
+        market_c = "1X2" # Default
+
+    # Normalización de la selección (canonización)
+    sel_c = "Sí" if "Sí" in raw_sel or "Yes" in raw_sel else "No" if "No" in raw_sel else raw_sel
+
+    if market_c == "1X2":
+        if "local" in raw_sel.lower() or raw_sel == "1": sel_c = "1"
+        elif "visitante" in raw_sel.lower() or raw_sel == "2": sel_c = "2"
+        elif "empate" in raw_sel.lower() or raw_sel == "X": sel_c = "X"
+    
+    # Formato UI
+    ui_market = market_c.replace("UNDER_2_5", "Under 2.5")
+    ui_selection = sel_c.replace("1", "Gana Local").replace("2", "Gana Visitante").replace("X", "Empate")
+    if ui_market == "BTTS":
+        ui_market = "Ambos Marcan"
+
+    return market_c, sel_c, ui_market, ui_selection
+
 
 def _recent_form_snippet(store: "LeagueStore", home: str, away: str, n: int = 6) -> str:
     # Stub sencillo; si quieres, puedes enriquecer con rachas reales desde store.df
@@ -952,7 +1044,7 @@ def _iaboot_messages(pred: PredictOut, odds: dict | None, form_text: str) -> tup
         f"- 1: {pred.probs['home_win_pct']}    X: {pred.probs['draw_pct']}    2: {pred.probs['away_win_pct']}\n"
         f"- Over 2.5: {pred.probs['over_2_5_pct']}\n"
         f"- BTTS Sí: {pred.probs['btts_pct']}\n\n"
-        f"Lambdas Poisson: local={pred.poisson.get('home_lambda')}  visitante={pred.poisson.get('away_lambda')}\n"
+        f"Lambdas Poisson: local={pred.poisson.get('home_lambda')}    visitante={pred.poisson.get('away_lambda')}\n"
         f"Marcadores más probables (top-5): {top}\n"
         f"Cuotas (si hay): {odds_text}\n"
         f"Contexto breve: {form_text or 'N/A'}\n\n"
@@ -1023,7 +1115,7 @@ def builder_suggest(inp: BuilderIn, request: Request):
         added_goals = True
     else:
         # Under 3.5 si pinta cerrado
-        p_u35 = p_under_xdot5(lam_sum, 3.5)        # <=3 goles
+        p_u35 = p_under_xdot5(lam_sum, 3.5)      # <=3 goles
         if p_u35 >= 0.59 and lam_sum <= 2.4:
             picks.append(BuilderLegOut(market="Goles", selection="Menos de 3.5", prob_pct=round(p_u35*100,2)))
             added_goals = True
@@ -1299,12 +1391,13 @@ class HistoryLogIn(BaseModel):
 def history_log(item: HistoryLogIn):
     ts = item.ts or int(time.time())
     conn = _db()
-    # Nota: Se podría actualizar el INSERT para guardar el nuevo campo 'total_goals_proj' si se actualiza la tabla 'history'
+    
+    # 🚀 CORRECCIÓN: Se actualiza el INSERT para guardar el nuevo campo 'total_goals_proj'
     conn.execute(
-        """INSERT INTO history(ts, league, home, away, market, selection, prob_pct, odd, stake)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+        """INSERT INTO history(ts, league, home, away, market, selection, prob_pct, odd, stake, total_goals_proj)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (ts, item.league, item.home, item.away, item.market, item.selection,
-         item.prob_pct, item.odd, item.stake)
+         item.prob_pct, item.odd, item.stake, item.total_goals_proj)
     )
     conn.commit(); conn.close()
     return {"ok": True}
@@ -1313,7 +1406,7 @@ def history_log(item: HistoryLogIn):
 def history_list(limit: int = 50):
     conn = _db()
     rows = conn.execute(
-        "SELECT id, ts, league, home, away, market, selection, prob_pct, odd, stake, result "
+        "SELECT id, ts, league, home, away, market, selection, prob_pct, odd, stake, result, total_goals_proj "
         "FROM history ORDER BY ts DESC LIMIT ?", (limit,)
     ).fetchall()
     conn.close()
